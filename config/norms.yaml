@@ -1,0 +1,119 @@
+# =============================================================================
+# Sales Process Audit — norms and weightage
+# Edit this file to match your OEM norms. Nothing else needs to change.
+# Weights across all pillars must total 100.
+# =============================================================================
+
+dealership:
+  name: "Unnati Motors"
+  dealer_code: ""
+  # Only these branches are treated as in-scope. Complaint extracts often carry
+  # other outlets of the same group; those rows are reported but not scored.
+  branches:
+    - NAGPUR_KAMPTHEE ROAD
+    - GREAT_NAG_ROAD
+    - NAGPUR_WARDHAMAN NGR
+    - HINDUSTAN COLONY
+    - RANI_DURGAVATI _CHOWK
+    - KHARBI_SH
+    - AMRAVATI
+    - YAVATMAL
+    - CHIKHALI
+    - LMM_AMRAVATI_SMART
+    - AMRAVATI_SMART_CV
+
+# --- Targets that must come from the dealership; leave null if unavailable ---
+targets:
+  enquiry_target: null          # enquiries expected in the audit month
+  retail_target: null           # retails expected in the audit month
+  market_share_norm: null       # % share norm for the territory
+  sanctioned_sc: null           # sanctioned sales consultant headcount
+  gross_margin_per_unit: null   # rupees
+
+# --- How to handle a partial period -------------------------------------------
+# Extracts pulled daily or mid-month cover fewer days than the norms assume.
+# Rate norms (conversion %) are unaffected by period length. Volume norms
+# (retails per consultant per month, order bank cover) are not: judging 6 days
+# of retails against a monthly norm makes every branch look like it is failing.
+period:
+  # Scale monthly volume norms by (days covered ÷ days in month) before scoring.
+  prorate_volume_norms: true
+  # Below this many days the volume lines are reported but not scored at all,
+  # because a 2-day sample cannot fairly evidence a monthly norm.
+  min_days_to_score_volume: 7
+  # Ageing threshold falls back to this when the extract spans less than 45 days.
+  short_period_ageing_days: 15
+
+# --- Conversion and process norms ---
+norms:
+  digital_share_pct: 40         # digital as % of enquiry book
+  referral_share_pct: 15
+  max_single_source_pct: 60
+  lead_response_minutes: 30
+  td_conversion_walkin_pct: 80
+  td_conversion_digital_pct: 40
+  td_to_booking_pct: 50
+  booking_to_retail_pct: 90
+  enquiry_to_retail_pct: 25
+  live_enquiry_over_30d_pct: 20   # max % of live book older than 30 days
+  order_bank_cover_months: 1.2
+  retails_per_sc_per_month: 8
+  allotment_to_invoice_days: 7
+  booking_to_invoice_days: 30
+  finance_penetration_pct: 70
+  insurance_penetration_pct: 85
+  exchange_penetration_pct: 25
+  # SHIELD is Mahindra's extended warranty product, so it is one line, not two.
+  # AMC is not a Mahindra scheme and is not audited.
+  rsa_penetration_pct: null     # <-- set your OEM norm; null leaves the line unscored
+  ew_penetration_pct: null      # <-- SHIELD / extended warranty norm
+  delivery_note_pct: 100
+  followup_zero_pct_max: 10     # max acceptable % of enquiries with no follow-up
+
+# --- Pillar weightage (must total 100) ---
+weights:
+  A_enquiry: 11
+  B_conversion: 14
+  C_volume: 13
+  D_manpower: 9
+  E_stock: 11
+  F_profitability: 14
+  G_experience: 11
+  H_systems: 5
+  I_demo_fleet: 2
+  J_physical: 10
+
+# --- Who owns the corrective action for each pillar ---------------------------
+# These names appear in the Owner column of the corrective action plan, in both
+# the Word report and the findings workbook. Edit them to match your structure.
+owners:
+  A_enquiry:       "Sales CRM / Sales Manager"
+  B_conversion:    "Branch Sales Managers"
+  C_volume:        "Sales Manager"
+  D_manpower:      "Sales Manager / HR"
+  E_stock:         "Stock Controller"
+  F_profitability: "Sales GM / Sales Manager"
+  G_experience:    "Sales Manager"
+  H_systems:       "Sales CRM"
+  I_demo_fleet:    "Branch Sales Managers"
+  J_physical:      "Branch Sales Managers"
+  default:         "Sales Manager"
+
+# --- Who signs the audit off (Section H of the report) ---
+signoff:
+  - Auditor
+  - Sales Manager
+  - Sales GM
+  - OEM Area Sales Manager
+
+# --- Grading bands on the Sales Process Index ---
+grading:
+  - {min: 90, band: "Green — Healthy",   response: "Sustain and benchmark",   action: "Share practice with the region; next audit at normal cycle"}
+  - {min: 75, band: "Amber — Watch",     response: "Correct within 30 days",  action: "Sales GM to sign the corrective action plan"}
+  - {min: 60, band: "Orange — At risk",  response: "Correct within 15 days",  action: "Weekly tracking by area sales manager until index crosses 75"}
+  - {min: 0,  band: "Red — Critical",    response: "Immediate intervention",  action: "Business review with Sales GM and OEM regional head; re-audit within 30 days"}
+
+# --- RAG thresholds on achievement % of an individual line ---
+rag:
+  green_min: 90
+  amber_min: 75
