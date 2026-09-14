@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "updated": "2026-09-14T06:23:12",
+  "runs": [
+    {
+      "run_at": "2026-09-14T06:23:12",
+      "label": "",
+      "period_start": "2026-08-01",
+      "period_end": "2026-08-29",
+      "days_covered": 29,
+      "index": 46.1,
+      "band": "Red \u2014 Critical",
+      "total_score": 22.56,
+      "scorable_weight": 48.98,
+      "enquiries": 5417,
+      "test_drives": 2150,
+      "bookings": 787,
+      "retails": 487,
+      "pillars": {
+        "Demand generation and enquiry health": 54.8,
+        "Funnel conversion health": 55.1,
+        "Volume, order bank and market share": 89.3,
+        "Manpower health and productivity": 42.4,
+        "Stock and inventory health": 88.9,
+        "Financial and profitability health": 17.8,
+        "Customer experience health": 26.8,
+        "Systems and process compliance": 29.2,
+        "Demo fleet traceability": 54.0,
+        "Physical Audit Sheet": null
+      },
+      "open_actions": 16
+    }
+  ]
+}
