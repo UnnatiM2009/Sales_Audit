@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block subtitle %}Upload the DMS extracts{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Run an audit</h2>
+  <p class="hint">Drop the monthly DMS exports below. The audit scores the funnel from
+     enquiry to delivery, produces a Sales Process Index, and lists every exception
+     with a named owner.</p>
+
+  <form method="post" action="{{ url_for('run') }}" enctype="multipart/form-data" id="f">
+    <label class="drop" id="drop" for="files">
+      <strong>Drop Excel files here, or click to choose</strong>
+      <span>All DMS extracts <em>and</em> your completed Physical Audit Sheet, together
+            &middot; .xlsx &middot; up to {{ max_mb }} MB total</span>
+      <input type="file" name="files" id="files" multiple accept=".xlsx,.xls,.xlsm" hidden>
+    </label>
+    <div id="filelist"></div>
+    <div class="row" style="margin-top:18px;align-items:flex-start">
+      <div>
+        <label class="meta" for="branch"><strong>Audit which branch?</strong></label><br>
+        <select name="branch" id="branch" style="margin-top:5px;width:290px">
+          <option value="all">All branches — network audit</option>
+          {% for b in branches %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="meta" for="label">Label this run (optional)</label><br>
+        <input type="text" name="label" id="label" maxlength="40"
+               placeholder="e.g. MTD 24-Aug, or week 36"
+               style="margin-top:5px;width:290px">
+      </div>
+    </div>
+    <p class="hint" style="margin-top:10px">Upload the same files either way — choosing a
+       branch scopes the audit to that outlet, and you can still switch branches from the
+       results page afterwards without uploading again.</p>
+    <div class="row" style="margin-top:18px">
+      <button class="btn" type="submit" id="go" disabled>Run the audit</button>
+      <a class="btn sec" href="{{ url_for('branch_hub') }}">Audit a single branch</a>
+      <div class="spin" id="spin"><i></i><span>Reading the extracts and scoring&hellip; this takes about half a minute.</span></div>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>What to upload</h2>
+  <p class="hint">Filenames are matched loosely: case, spaces, underscores and a trailing
+     date are all fine, so <code>Retails_29-08-2026.xlsx</code> works. Each file's columns
+     are checked before it is accepted, so a mislabelled export is rejected rather than
+     silently scored.</p>
+  <table>
+    <thead><tr><th style="width:70px">Ref</th><th>Expected filename</th><th>What it is</th>
+      <th>Feeds</th><th style="width:90px">Required</th></tr></thead>
+    <tbody>
+    {% for s in required %}
+      <tr><td><strong>{{ s.ref }}</strong></td><td><code>{{ s.pattern }}</code></td>
+        <td>{{ s.label }}</td><td>{{ s.scores }}</td>
+        <td><span class="pill Red">Required</span></td></tr>
+    {% endfor %}
+    {% for s in optional %}
+      <tr><td><strong>{{ s.ref }}</strong></td><td><code>{{ s.pattern }}</code></td>
+        <td>{{ s.label }}</td><td>{{ s.scores }}</td>
+        <td><span class="pill NS">Optional</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint" style="margin-top:14px">A missing optional file does not stop the run.
+     Its lines are marked <em>not scored</em> with the missing file named, and are excluded
+     from the index denominator rather than scored zero — so a data gap never looks like a
+     failing branch.</p>
+</div>
+
+<div class="card">
+  <h2>Uploading daily or mid-month</h2>
+  <p class="hint">Month-to-date extracts are fine. The audit detects the period from the
+     data and pro-rates monthly volume norms — retail target, retails per consultant,
+     order bank cover — to the days covered, so a 10-day pull is not judged against a
+     full month's target. Conversion percentages need no adjustment.</p>
+  <p class="hint">Every run is recorded, so the <a href="{{ url_for('trend') }}">trend page</a>
+     shows whether the corrective actions are working. Re-running the same period replaces
+     that row rather than adding a duplicate.</p>
+</div>
+
+<div class="card">
+  <h2>Physical Audit Sheet</h2>
+  <p class="hint">The DMS cannot tell you whether the display cars are clean, whether
+     consultants carry a current price list, or whether the walk-in register is being
+     maintained. Those have to be walked and seen.</p>
+
+  <p class="hint"><strong>On the phone.</strong> Open
+     <code>{{ url_for('mobile.home', _external=True) }}</code> on the device you carry
+     round the showroom, pick the branch and tap through the 62 items. Answers save as
+     you go and survive a dead spot in the delivery bay. Submit at the end and the audit
+     waits on the server.</p>
+  <p class="hint"><strong>Export it.</strong> At the end of the walk, tap
+     <em>Export as Excel sheet</em>. One branch, one sheet. That file is the record
+     of the audit.</p>
+  <p class="hint"><strong>On the laptop.</strong> Upload the exported sheet in the same
+     drop box as the DMS extracts, in the same go, and run. Several sheets — one per
+     branch — can go in together; they are merged automatically. Keep
+     <code>Physical_Audit_Sheet</code> at the start of the filename and a branch suffix
+     or a <code>(1)</code> makes no difference.</p>
+
+  <div class="row" style="margin:14px 0 4px">
+    <a class="btn sec" href="{{ url_for('mobile.home') }}">Open the mobile audit</a>
+    <a class="btn sec" href="{{ url_for('branch_hub') }}">Branch audits &amp; capture status</a>
+  </div>
+
+  <div class="row" style="margin-top:16px;align-items:flex-end">
+    <div>
+      <label class="meta" for="sheetbranch"><strong>Blank sheet for one branch</strong></label><br>
+      <select id="sheetbranch" style="margin-top:5px;width:290px">
+        <option value="all">All branches — one tab each</option>
+        {% for b in branches %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+      </select>
+    </div>
+    <a class="btn sec" id="sheetdl" href="{{ url_for('checklist') }}">Download blank sheet</a>
+  </div>
+  <p class="hint" style="margin-top:8px">Pick a branch and the sheet comes with that one
+     tab only — easier to work from on a single visit, and nobody fills in the wrong
+     outlet by mistake.</p>
+
+  <p class="hint" style="margin-top:14px">Prefer to fill it in by hand? Download the blank
+     sheet with the button above and upload it the same way. Both routes produce the same
+     file and score identically.</p>
+
+  <p class="hint">The 12 sections: exterior and ambience, display vehicles, demo and
+     test-drive fleet, uniform and grooming, walk-in register, follow-up discipline,
+     sales consultant kit, customer amenities, mandatory displays, delivery experience,
+     systems and safety, performance visibility.</p>
+</div>
+
+<script>
+// The blank-sheet link follows the branch picker beside it.
+const sb=document.getElementById('sheetbranch'), sd=document.getElementById('sheetdl');
+const sheetBase={{ url_for('checklist')|tojson }};
+sb.addEventListener('change',()=>{
+  sd.href = sb.value==='all' ? sheetBase
+          : sheetBase + '?branch=' + encodeURIComponent(sb.value);
+});
+
+const drop=document.getElementById('drop'), inp=document.getElementById('files'),
+      list=document.getElementById('filelist'), go=document.getElementById('go'),
+      form=document.getElementById('f'), spin=document.getElementById('spin');
+
+function human(b){return b<1048576?(b/1024).toFixed(0)+' KB':(b/1048576).toFixed(1)+' MB';}
+function show(){
+  list.innerHTML='';
+  const fs=inp.files;
+  if(!fs.length){go.disabled=true;return;}
+  let total=0;
+  for(const f of fs){
+    total+=f.size;
+    const d=document.createElement('div');
+    d.innerHTML='<span>'+f.name+'</span><span class="sz">'+human(f.size)+'</span>';
+    list.appendChild(d);
+  }
+  const t=document.createElement('div');
+  t.innerHTML='<strong>'+fs.length+' file'+(fs.length>1?'s':'')+
+              '</strong><span class="sz"><strong>'+human(total)+'</strong></span>';
+  list.appendChild(t);
+  go.disabled=false;
+}
+inp.addEventListener('change',show);
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{
+  ev.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{
+  ev.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',ev=>{inp.files=ev.dataTransfer.files;show();});
+form.addEventListener('submit',()=>{go.disabled=true;go.textContent='Running…';
+  spin.style.display='flex';});
+</script>
+{% endblock %}

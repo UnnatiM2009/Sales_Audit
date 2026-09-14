@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block subtitle %}Trend across runs{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Sales Process Index over time</h2>
+  <p class="hint">One point per run. Rate-based measures are comparable across periods
+     of different length; volume norms are pro-rated before scoring, so a 10-day
+     extract and a full month sit on the same scale.</p>
+
+  {% if chart %}
+  <svg viewBox="0 0 {{ chart.w }} {{ chart.h + 34 }}" style="width:100%;height:230px"
+       xmlns="http://www.w3.org/2000/svg">
+    <line x1="0" y1="{{ chart.h }}" x2="{{ chart.w }}" y2="{{ chart.h }}"
+          stroke="#d7dee7" stroke-width="1"/>
+    <path d="{{ chart.path }}" fill="none" stroke="#1f3864" stroke-width="2.5"
+          stroke-linejoin="round" stroke-linecap="round"/>
+    {% for p in chart.points %}
+      <circle cx="{{ p.x }}" cy="{{ p.y }}" r="4.5" fill="#1f3864"/>
+      <text x="{{ p.x }}" y="{{ p.y - 11 }}" font-size="12" fill="#1f3864"
+            text-anchor="middle" font-weight="600">{{ '%.1f'|format(p.v) }}</text>
+      <text x="{{ p.x }}" y="{{ chart.h + 20 }}" font-size="11" fill="#5a6572"
+            text-anchor="middle">{{ p.label[5:] }}</text>
+    {% endfor %}
+  </svg>
+  {% else %}
+    <p class="hint">At least two runs are needed before a trend can be drawn.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Run history <span class="meta">({{ runs|length }})</span></h2>
+  {% if runs %}
+  <table>
+    <thead><tr>
+      <th>Period</th><th>Label</th><th class="num">Days</th><th class="num">Index</th>
+      <th style="width:70px">Band</th><th class="num">Enquiries</th><th class="num">Test drives</th>
+      <th class="num">Bookings</th><th class="num">Retails</th><th class="num">Actions</th>
+    </tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr>
+        <td>{{ r.period_start or '—' }} → {{ r.period_end or '—' }}
+          <div class="meta" style="font-size:11.5px">run {{ r.run_at[:16].replace('T',' ') }}</div></td>
+        <td>{{ r.label or '—' }}</td>
+        <td class="num">{{ r.days_covered or '—' }}</td>
+        <td class="num"><strong>{{ '%.1f'|format(r.index) if r.index is not none else '—' }}</strong></td>
+        <td><span class="pill {{ r.band.split(' ')[0] }}">{{ r.band.split(' ')[0] }}</span></td>
+        <td class="num">{{ '{:,}'.format(r.enquiries) if r.enquiries else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(r.test_drives) if r.test_drives else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(r.bookings) if r.bookings else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(r.retails) if r.retails else '—' }}</td>
+        <td class="num">{{ r.open_actions }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="hint">No runs recorded yet. Run an audit and it will appear here.</p>
+  {% endif %}
+</div>
+
+{% if runs|length > 1 %}
+<div class="card">
+  <h2>Pillar movement</h2>
+  <p class="hint">Achievement percentage by pillar, most recent run first.</p>
+  {% set names = runs[0].pillars.keys()|list %}
+  <table>
+    <thead><tr><th>Period end</th>
+      {% for n in names %}<th class="num">{{ n.split(' ')[0] }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr><td>{{ r.period_end or r.run_at[:10] }}</td>
+      {% for n in names %}
+        {% set v = r.pillars.get(n) %}
+        <td class="num">{{ '%.0f'|format(v) if v is not none else '—' }}</td>
+      {% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint" style="margin-top:12px">Column headings are abbreviated to the first
+     word of each pillar: {{ names|join(' · ') }}.</p>
+</div>
+{% endif %}
+
+<a class="btn" href="{{ url_for('index') }}">Run another audit</a>
+{% endblock %}

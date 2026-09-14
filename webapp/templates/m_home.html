@@ -1,0 +1,98 @@
+{% extends "m_base.html" %}
+{% block title %}Physical Audit — start{% endblock %}
+{% block content %}
+
+{% if open_rows %}
+<div class="card">
+  <h2>Carry on where you left off</h2>
+  <p class="hint">Answers are saved as you tap, so an audit interrupted by a
+     customer walking in is still here.</p>
+  <ul class="rowlist">
+    {% for r in open_rows %}
+    <li>
+      <div class="grow">
+        <div class="name">{{ r.branch }}</div>
+        <div class="sub">{{ r.answered }} of {{ r.total }} answered
+          {%- if r.auditor != '—' %} · {{ r.auditor }}{% endif %} · {{ r.updated }}</div>
+        <div class="bar" style="margin-top:6px"><i style="width:{{ r.pct_done }}%"></i></div>
+      </div>
+      <a class="btn ghost" style="width:auto"
+         href="{{ url_for('mobile.audit', rec_id=r.id) }}">Resume</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Start a branch audit</h2>
+  <p class="hint">{{ total }} items across {{ sections }} sections. Roughly 25 minutes
+     of walking. One audit covers one branch.</p>
+  <form method="post" action="{{ url_for('mobile.start') }}">
+    <label class="fld" for="branch">Branch</label>
+    <select name="branch" id="branch" required>
+      <option value="" disabled {{ 'selected' if not preset }}>Choose the outlet…</option>
+      {% for b in branches %}<option value="{{ b }}"
+        {{ 'selected' if b == preset }}>{{ b }}</option>{% endfor %}
+    </select>
+
+    <label class="fld" for="auditor">Your name</label>
+    <input type="text" name="auditor" id="auditor" maxlength="60"
+           autocomplete="name" placeholder="Who is walking the floor">
+
+    <label class="fld" for="audit_date">Date of visit</label>
+    <input type="date" name="audit_date" id="audit_date">
+
+    <button class="btn" type="submit" style="margin-top:18px">Start the walk-through</button>
+  </form>
+</div>
+
+{% if done_rows %}
+<div class="card">
+  <h2>Submitted</h2>
+  <p class="hint">These are ready for the laptop. On the audit machine, open the
+     branch page and run the audit — the sheet is picked up automatically.</p>
+  <ul class="rowlist">
+    {% for r in done_rows %}
+    <li>
+      <div class="grow">
+        <div class="name">{{ r.branch }}</div>
+        <div class="sub">{{ r.audit_date }} · {{ r.auditor }} ·
+          {{ r.answered }}/{{ r.total }} answered
+          {%- if r.criticals %} · {{ r.criticals }} critical{% endif %}</div>
+      </div>
+      {% if r.score is not none %}
+      <span class="pill {{ 'ok' if r.score >= 80 else ('warn' if r.score >= 60 else 'crit') }}">
+        {{ r.score }}%</span>
+      {% endif %}
+      <a class="btn ghost" style="width:auto"
+         href="{{ url_for('mobile.done', rec_id=r.id) }}">Open</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<p class="meta" style="text-align:center">
+  Prefer paper or Excel?
+  <a href="{{ url_for('checklist') }}">Download the blank sheet</a>.
+</p>
+
+<script>
+// Default the visit date to today without making the server guess the timezone.
+const d = document.getElementById('audit_date');
+if (d && !d.value) {
+  const n = new Date();
+  d.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0')
+            + '-' + String(n.getDate()).padStart(2,'0');
+}
+// Remember the auditor's name between visits — it is the same person all day.
+const a = document.getElementById('auditor');
+try {
+  if (a) {
+    a.value = localStorage.getItem('auditorName') || '';
+    a.addEventListener('change', () => localStorage.setItem('auditorName', a.value));
+  }
+} catch (e) { /* private browsing — the field just starts empty */ }
+</script>
+{% endblock %}

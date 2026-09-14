@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block subtitle %}Branch audits{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Audit one branch</h2>
+  <p class="hint">A network audit tells you how the dealership is doing. A branch audit
+     tells a branch manager what to fix on Monday morning. Upload the same DMS extracts
+     either way — the audit filters every file, including the complaint extracts, to the
+     branch you pick, so a branch report only ever sees its own records.</p>
+
+  <form method="post" action="{{ url_for('run') }}" enctype="multipart/form-data" id="f">
+    <label class="drop" id="drop" for="files">
+      <strong>Drop the DMS extracts here, or click to choose</strong>
+      <span>Enquiry, Booking, Test Drive, Retails and the rest &middot; up to {{ max_mb }} MB</span>
+      <input type="file" name="files" id="files" multiple accept=".xlsx,.xls,.xlsm" hidden>
+    </label>
+    <div id="filelist"></div>
+    <div class="row" style="margin-top:18px;align-items:flex-start">
+      <div>
+        <label class="meta" for="branch"><strong>Branch to audit</strong></label><br>
+        <select name="branch" id="branch" style="margin-top:5px;width:290px" required>
+          {% for r in rows %}
+            <option value="{{ r.branch }}">{{ r.branch }}{% if r.physical %} — physical audit ready{% endif %}</option>
+          {% endfor %}
+          <option value="all">All branches — network audit</option>
+        </select>
+      </div>
+      <div>
+        <label class="meta" for="label">Label this run (optional)</label><br>
+        <input type="text" name="label" id="label" maxlength="40"
+               placeholder="e.g. Sept visit" style="margin-top:5px;width:290px">
+      </div>
+    </div>
+    <div class="row" style="margin-top:18px">
+      <button class="btn" type="submit" id="go" disabled>Run the branch audit</button>
+      <div class="spin" id="spin"><i></i><span>Scoring&hellip; about half a minute.</span></div>
+    </div>
+  </form>
+
+  <p class="hint" style="margin-top:14px">Include the Physical Audit Sheet exported from
+     the phone in the same upload and pillar J is scored from it. Several branches'
+     sheets can go in together. If none is attached, anything still held from a recent
+     mobile walk is used instead, and the results page says so.</p>
+</div>
+
+<div class="card">
+  <h2>Physical audits captured on mobile</h2>
+  <p class="hint">Open <code>{{ url_for('mobile.home', _external=True) }}</code> on the
+     phone — or scan it from the desktop browser's address bar — and walk the showroom.
+     {% if ready %}{{ ready }} branch{{ 'es' if ready > 1 }} ready to score.{% endif %}</p>
+
+  <table>
+    <thead>
+      <tr><th>Branch</th><th>Physical audit</th><th style="width:120px">Answered</th>
+        <th style="width:110px">Score</th><th style="width:110px">Critical fails</th>
+        <th style="width:230px">Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      {% set p = r.physical or r.draft %}
+      <tr>
+        <td><strong>{{ r.branch }}</strong></td>
+        <td>
+          {% if r.physical %}
+            <span class="pill Green">Submitted</span>
+            <span class="meta">{{ r.physical.audit_date }} · {{ r.physical.auditor }}</span>
+          {% elif r.draft %}
+            <span class="pill Amber">In progress</span>
+            <span class="meta">{{ r.draft.updated }}</span>
+          {% else %}
+            <span class="pill NS">Not walked</span>
+          {% endif %}
+        </td>
+        <td class="num">{% if p %}{{ p.answered }} / {{ p.total }}{% else %}—{% endif %}</td>
+        <td class="num">
+          {% if p and p.score is not none %}
+            <span class="pill {{ 'Green' if p.score >= 80 else ('Amber' if p.score >= 60 else 'Red') }}">
+              {{ p.score }}%</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="num">
+          {% if p and p.criticals %}<span class="pill Red">{{ p.criticals }}</span>
+          {% elif p %}0{% else %}—{% endif %}
+        </td>
+        <td>
+          {% if p %}
+            <a href="{{ url_for('mobile.done', rec_id=p.id) }}">View</a> ·
+            <a href="{{ url_for('mobile.sheet', rec_id=p.id) }}">Excel</a> ·
+            <a href="{{ url_for('mobile.audit', rec_id=p.id) }}">Edit</a> ·
+            <a href="{{ url_for('checklist', branch=r.branch) }}">Blank</a>
+          {% else %}
+            <a href="{{ url_for('mobile.home', branch=r.branch) }}">Walk on mobile</a> ·
+            <a href="{{ url_for('checklist', branch=r.branch) }}">Blank sheet</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="dl" style="margin-top:16px">
+    <a class="btn sec" href="{{ url_for('physical_sheet') }}">Download all captures as one sheet</a>
+    <a class="btn sec" href="{{ url_for('checklist') }}">Blank sheet — all branches</a>
+    <a class="btn sec" href="{{ url_for('mobile.home') }}">Open the mobile audit</a>
+  </div>
+  <p class="hint" style="margin-top:12px">The combined sheet is only needed for the
+     command-line flow — drop it in <code>input/</code> and run
+     <code>python run_audit.py --branch "&lt;name&gt;"</code>. In the web app it is
+     assembled automatically at run time.</p>
+</div>
+
+<div class="card">
+  <h2>How the two halves meet</h2>
+  <table>
+    <tbody>
+      <tr><td style="width:90px"><strong>Phone</strong></td>
+        <td>The auditor walks the showroom and answers 62 items across 12 sections.
+            Every tap is saved on the device and posted to the server; out of signal,
+            answers queue up and sync by themselves.</td></tr>
+      <tr><td><strong>Server</strong></td>
+        <td>The captures are held per branch. The latest submitted audit for a branch is
+            the one that scores.</td></tr>
+      <tr><td><strong>Laptop</strong></td>
+        <td>Upload the DMS extracts and run the branch. The captures are assembled into
+            a Physical Audit Sheet in the ordinary format and scored as pillar J —
+            10 of the 100 weightage points — with critical failures raising corrective
+            actions automatically.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+const drop=document.getElementById('drop'), inp=document.getElementById('files'),
+      list=document.getElementById('filelist'), go=document.getElementById('go'),
+      form=document.getElementById('f'), spin=document.getElementById('spin');
+function human(b){return b<1048576?(b/1024).toFixed(0)+' KB':(b/1048576).toFixed(1)+' MB';}
+function show(){
+  list.innerHTML=''; const fs=inp.files;
+  if(!fs.length){go.disabled=true;return;}
+  let total=0;
+  for(const f of fs){ total+=f.size;
+    const d=document.createElement('div');
+    d.innerHTML='<span>'+f.name+'</span><span class="sz">'+human(f.size)+'</span>';
+    list.appendChild(d); }
+  const t=document.createElement('div');
+  t.innerHTML='<strong>'+fs.length+' file'+(fs.length>1?'s':'')+
+              '</strong><span class="sz"><strong>'+human(total)+'</strong></span>';
+  list.appendChild(t); go.disabled=false;
+}
+inp.addEventListener('change',show);
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{
+  ev.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{
+  ev.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',ev=>{inp.files=ev.dataTransfer.files;show();});
+form.addEventListener('submit',()=>{go.disabled=true;go.textContent='Running…';
+  spin.style.display='flex';});
+</script>
+{% endblock %}

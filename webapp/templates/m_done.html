@@ -1,0 +1,129 @@
+{% extends "m_base.html" %}
+{% block title %}{{ rec.branch }} — submitted{% endblock %}
+{% block topbar %}
+<h1>{{ rec.branch }}<span class="sub">
+  {% if rec.submitted %}Submitted{% else %}Draft — not submitted{% endif %}</span></h1>
+<a href="{{ url_for('mobile.home') }}">Done</a>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>{% if rec.submitted %}Audit submitted{% else %}Audit in progress{% endif %}</h2>
+  <p class="hint">
+    {{ rec.audit_date }}{% if rec.auditor %} · {{ rec.auditor }}{% endif %} ·
+    {{ prog.answered }} of {{ prog.total }} items answered
+    {%- if prog.na %} ({{ prog.na }} marked N/A){% endif %}.
+  </p>
+
+  {% if prog.score is not none %}
+  <div style="display:flex;align-items:baseline;gap:12px;margin:6px 0 12px">
+    <span style="font-size:42px;font-weight:700;color:var(--navy)">{{ prog.score }}%</span>
+    <span class="pill {{ 'ok' if prog.score >= 80 else ('warn' if prog.score >= 60 else 'crit') }}">
+      {{ 'Good' if prog.score >= 80 else ('Needs work' if prog.score >= 60 else 'Poor') }}</span>
+  </div>
+  <p class="meta">This is the physical score alone. It becomes pillar J — 10 of the 100
+     weightage points — once the DMS extracts are scored on the laptop.</p>
+  {% endif %}
+</div>
+
+{% if prog.criticals %}
+<div class="card" style="border-color:#e8b4ad">
+  <h2 style="color:var(--red)">{{ prog.criticals|length }} critical item{{ 's' if prog.criticals|length > 1 }} failed</h2>
+  <p class="hint">Each of these raises a corrective action in the report automatically,
+     with a named owner, whether or not the section scores well overall.</p>
+  <ul class="rowlist">
+    {% for c in prog.criticals %}
+    <li>
+      <div class="grow">
+        <div class="name">{{ c.code }} · {{ c.item }}</div>
+        <div class="sub">{{ c.observation or 'No observation recorded — add one so the branch cannot dispute it.' }}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Section by section</h2>
+  <ul class="rowlist">
+    {% for s in sections %}
+    <li>
+      <div class="grow">
+        <div class="name" style="font-weight:500">{{ s.short }}</div>
+        <div class="bar" style="margin-top:6px"><i style="width:{{ (s.done / s.n * 100)|round(0) }}%"></i></div>
+      </div>
+      <span class="pill {{ 'ok' if s.done == s.n else 'grey' }}">{{ s.done }}/{{ s.n }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="card">
+  <h2>Send the sheet to the laptop</h2>
+  <p class="hint">This is the file the main audit needs. Save it or share it now —
+     then on the laptop upload it together with the DMS extracts and run the audit.
+     Keep <code>Physical_Audit_Sheet</code> at the start of the name; the branch
+     suffix is already there.</p>
+
+  <a class="btn" id="dl" href="{{ url_for('mobile.sheet', rec_id=rec.id) }}">
+    Export as Excel sheet</a>
+  <button class="btn sec" type="button" id="share" style="display:none">
+    Share it (WhatsApp, email, Drive)</button>
+  <p class="meta" id="sharenote" style="margin-top:10px;text-align:center;display:none"></p>
+
+  <p class="meta" style="margin-top:12px">One file per branch. Walk three outlets,
+     export three sheets, upload all three in the same go — they are combined
+     automatically.</p>
+</div>
+
+<div class="card">
+  <h2>Corrections</h2>
+  {% if rec.submitted %}
+  <p class="hint">If an answer was wrong, reopen the audit, fix it, and export the
+     sheet again. The newer file replaces the older one for that branch.</p>
+  <form method="post" action="{{ url_for('mobile.reopen', rec_id=rec.id) }}">
+    <button class="btn sec" type="submit">Reopen to correct an answer</button>
+  </form>
+  {% else %}
+  <p class="hint">This audit has not been submitted yet.</p>
+  <a class="btn" href="{{ url_for('mobile.audit', rec_id=rec.id) }}">Carry on answering</a>
+  {% endif %}
+  <a class="btn ghost" href="{{ url_for('mobile.home') }}" style="margin-top:10px">
+    Audit another branch</a>
+</div>
+
+<script>
+// Sharing the file straight from the phone saves a trip through Downloads and
+// a cable. Only offered where the browser can actually share a file — on the
+// rest, the download button above is the path.
+(function(){
+  const url  = {{ url_for('mobile.sheet', rec_id=rec.id)|tojson }};
+  const name = {{ ("Physical_Audit_Sheet_" ~ rec.branch|replace(" ","_")|replace("/","_") ~ ".xlsx")|tojson }};
+  const btn  = document.getElementById('share');
+  const note = document.getElementById('sharenote');
+  if(!(navigator.canShare && navigator.share)) return;
+  btn.style.display = 'flex';
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try{
+      const res  = await fetch(url);
+      if(!res.ok) throw new Error('could not build the sheet');
+      const blob = await res.blob();
+      const file = new File([blob], name,
+        {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      if(!navigator.canShare({files:[file]})) throw new Error('this phone cannot share files');
+      await navigator.share({files:[file], title: name});
+      note.style.display = 'block';
+      note.textContent = 'Shared. Open it on the laptop and upload it with the extracts.';
+    }catch(err){
+      if(err && err.name === 'AbortError'){ /* the auditor changed their mind */ }
+      else { note.style.display='block';
+             note.textContent = 'Could not share — use Export as Excel sheet instead.'; }
+    }finally{
+      btn.disabled = false; btn.textContent = 'Share it (WhatsApp, email, Drive)';
+    }
+  });
+})();
+</script>
+{% endblock %}

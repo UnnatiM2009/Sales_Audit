@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ s.period }}{% endblock %}
+{% block content %}
+
+{% set bandclass = s.band.split(' ')[0] %}
+
+{% if s.branches %}
+<div class="card">
+  <h2>Audit scope</h2>
+  <p class="hint">The network audit covers every branch together. Click a branch to audit
+     that outlet on its own, with its own report and workbook to download.</p>
+  <div class="branchbar">
+    <a href="{{ url_for('results', run_id=run_id) }}"
+       class="{{ 'on' if not s.scope }}">All branches</a>
+    {% for b in s.branches %}
+      <a href="{{ url_for('branch_results', run_id=run_id, branch=b) }}"
+         class="{{ 'on' if s.scope == b }}">{{ b }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  {% if s.scope %}
+    <h2 style="margin-bottom:14px">{{ s.scope }} <span class="meta"
+      style="font-weight:400">— branch audit</span></h2>
+  {% endif %}
+  <div class="hero">
+    <div>
+      <div class="score">{{ '%.1f'|format(s.index) if s.index is not none else '—' }}<small>/100</small></div>
+      <div class="meta">Sales Process Index</div>
+      {% if s.movement and s.movement.index_delta is not none %}
+        {% set d = s.movement.index_delta %}
+        <div class="pill {{ 'Green' if d > 0 else ('Red' if d < 0 else 'NS') }}"
+             style="margin-top:7px">
+          {{ '+' if d > 0 else '' }}{{ '%.1f'|format(d) }} vs previous run
+          ({{ '%.1f'|format(s.movement.prior_index) }})
+        </div>
+      {% endif %}
+    </div>
+    <div class="bandbox {{ bandclass }}">
+      {{ s.band }}<br>
+      <span style="font-weight:400;font-size:13px">{{ s.response }}</span>
+    </div>
+    <div class="meta" style="flex:1;min-width:260px">
+      <div><strong>Period:</strong> {{ s.period }}{% if s.days_covered %} ({{ s.days_covered }} days){% endif %}</div>
+      {% if s.label %}<div><strong>Label:</strong> {{ s.label }}</div>{% endif %}
+      <div><strong>Population:</strong> {{ s.population }}</div>
+      <div><strong>Scored on:</strong> {{ '%.1f'|format(s.scorable) }} of {{ '%g'|format(s.total_weight) }} weightage points</div>
+      <div><strong>Generated:</strong> {{ s.generated }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Download{% if s.scope %} — {{ s.scope }}{% else %} — all branches{% endif %}</h2>
+  <p class="hint">Each scope has its own pair of files. Downloading a branch does not
+     overwrite the network report.</p>
+  <div class="dl">
+    <a class="btn" href="{{ url_for('download', run_id=run_id, what='report', branch=s.scope) if s.scope
+                            else url_for('download', run_id=run_id, what='report') }}">
+      Audit report &middot; Word</a>
+    <a class="btn" href="{{ url_for('download', run_id=run_id, what='findings', branch=s.scope) if s.scope
+                            else url_for('download', run_id=run_id, what='findings') }}">
+      Findings workbook &middot; Excel</a>
+    <a class="btn sec" href="{{ url_for('download', run_id=run_id, what='bundle', branch=s.scope) if s.scope
+                                else url_for('download', run_id=run_id, what='bundle') }}">
+      Both, zipped</a>
+  </div>
+  <p class="hint" style="margin:16px 0 0">{{ s.action }}</p>
+  {% if s.period_note %}<div class="note" style="margin-top:12px">{{ s.period_note }}</div>{% endif %}
+</div>
+
+{% if s.notes %}
+<div class="card">
+  <h2>Loader notes</h2>
+  {% for n in s.notes %}<div class="note">{{ n }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Files read</h2>
+  <p class="hint">Check the row counts before trusting the index. A wrong count here means
+     a wrong file was bound.</p>
+  <table>
+    <thead><tr><th style="width:60px">Ref</th><th>File</th><th>What it is</th>
+      <th class="num">Rows</th><th style="width:120px">Status</th></tr></thead>
+    <tbody>
+    {% for b in s.bound %}
+      <tr>
+        <td><strong>{{ b.ref }}</strong></td>
+        <td>{{ b.filename }}</td>
+        <td>{{ b.label }}</td>
+        <td class="num">{{ '{:,}'.format(b.rows) if b.rows is not none else '—' }}</td>
+        <td><span class="pill {{ 'Green' if b.status=='loaded' else ('Red' if b.required else 'NS') }}">
+          {{ b.status }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Index by pillar</h2>
+  <table>
+    <thead><tr><th>Pillar</th><th class="num">Weight</th><th class="num">Scored</th>
+      <th class="num">Score</th><th class="num">Achievement</th>
+      <th style="width:160px">&nbsp;</th><th style="width:80px">RAG</th></tr></thead>
+    <tbody>
+    {% for p in s.pillars %}
+      {% set a = p.achievement %}
+      <tr>
+        <td>{{ p.title }}</td>
+        <td class="num">{{ '%g'|format(p.weight) }}</td>
+        <td class="num">{{ '%.1f'|format(p.scorable) }}</td>
+        <td class="num">{{ '%.1f'|format(p.score) }}</td>
+        <td class="num">{{ '%.1f%%'|format(a) if a is not none else '—' }}</td>
+        <td>
+          {% if a is not none %}
+          <div class="bar"><i style="width:{{ a }}%;background:{{
+            '#1e7a45' if a>=90 else ('#d19a00' if a>=75 else '#c0392b') }}"></i></div>
+          {% endif %}
+        </td>
+        <td><span class="pill {{ p.rag }}">{{ p.rag }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if s.funnel %}
+<div class="card">
+  <h2>Funnel snapshot</h2>
+  <table>
+    <thead><tr><th>Stage</th><th>Norm</th><th class="num">Count</th>
+      <th>Loss / leakage</th><th>Conversion</th><th>Remark</th></tr></thead>
+    <tbody>
+    {% for r in s.funnel %}
+      <tr>{% for c in r %}<td{% if loop.index==3 %} class="num"{% endif %}>{{ c }}</td>{% endfor %}</tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if not s.physical %}
+<div class="card">
+  <h2>Physical Audit Sheet</h2>
+  <p class="hint">Not supplied, so pillar J is unscored — 10 of the 100 weightage points
+     were not auditable on this run.</p>
+  <p class="hint">Walk the showroom on a phone at
+     <a href="{{ url_for('mobile.home') }}">the mobile audit</a>; the capture is picked up
+     automatically the next time you run{% if s.scope %} {{ s.scope }}{% endif %}. Or
+     download the blank sheet from the <a href="{{ url_for('index') }}">upload page</a>,
+     fill it in and include it with the extracts.</p>
+</div>
+{% endif %}
+
+{% if s.physical %}
+<div class="card">
+  <h2>Physical Audit Sheet</h2>
+  <p class="hint">
+    {%- if s.physical_source == 'mobile' %}Captured on mobile and scored automatically —
+      no sheet was uploaded for this run.
+    {%- elif s.physical_source == 'uploaded' %}From the sheet uploaded with the extracts.
+    {%- endif %}
+  </p>
+  <table>
+    <thead><tr><th>Section</th><th class="num">Items</th><th class="num">Failed</th>
+      <th class="num">Achievement</th><th>Observation</th></tr></thead>
+    <tbody>
+    {% for r in s.physical %}
+      <tr><td>{{ r[0] }}</td><td class="num">{{ r[1] }}</td><td class="num">{{ r[2] }}</td>
+        <td class="num">{{ r[3] }}</td><td>{{ r[4] }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Critical findings</h2>
+  {% if s.findings %}
+    <ul class="tight">{% for f in s.findings %}<li>{{ f }}</li>{% endfor %}</ul>
+  {% else %}<p class="hint">No line fell below the amber threshold.</p>{% endif %}
+  {% if s.strengths %}
+    <details style="margin-top:14px"><summary>Strengths observed</summary>
+      <ul class="tight">{% for f in s.strengths %}<li>{{ f }}</li>{% endfor %}</ul>
+    </details>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Corrective action plan <span class="meta">({{ s.actions|length }})</span></h2>
+  <table>
+    <thead><tr><th style="width:40px">#</th><th style="width:110px">Pillar</th>
+      <th>Gap observed</th><th>Action agreed</th><th style="width:150px">Owner</th>
+      <th style="width:110px">Target</th></tr></thead>
+    <tbody>
+    {% for a in s.actions %}
+      <tr><td>{{ loop.index }}</td><td>{{ a.pillar }}</td><td>{{ a.gap }}</td>
+        <td>{{ a.action }}</td><td>{{ a.owner }}</td><td>{{ a.target or '—' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <details>
+    <summary>Full scorecard — every parameter ({{ s.lines|length }} lines)</summary>
+    <table style="margin-top:12px">
+      <thead><tr><th style="width:52px">S.No</th><th style="width:180px">Parameter</th>
+        <th>Actual observed</th><th style="width:170px">Norm</th>
+        <th class="num" style="width:50px">Wt</th><th class="num" style="width:60px">Ach</th>
+        <th class="num" style="width:56px">Score</th><th style="width:70px">RAG</th></tr></thead>
+      <tbody>
+      {% for l in s.lines %}
+        <tr>
+          <td><strong>{{ l.code }}</strong></td>
+          <td>{{ l.name }}</td>
+          <td>{{ l.actual }}
+            {% if l.source and l.source != 'Not supplied' %}
+              <div class="meta" style="font-size:11.5px">Source: {{ l.source }}</div>
+            {% endif %}
+          </td>
+          <td>{{ l.norm }}</td>
+          <td class="num">{{ l.weight }}</td>
+          <td class="num">{{ '%.0f%%'|format(l.achievement) if l.achievement is not none else '—' }}</td>
+          <td class="num">{{ '%.1f'|format(l.score) if l.score is not none else 'NS' }}</td>
+          <td><span class="pill {{ l.rag }}">{{ l.rag }}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</div>
+
+<p class="meta" style="text-align:center">
+  This page stays available at its current link until the run expires — download the files
+  to keep them. The <a href="{{ url_for('trend') }}">trend page</a> keeps the index for
+  every run.</p>
+{% endblock %}

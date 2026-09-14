@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ title }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h2 style="color:var(--red)">{{ title }}</h2>
+  <pre style="background:var(--grey-bg);padding:14px;border-radius:6px;white-space:pre-wrap;
+              font-size:13px;margin:10px 0 18px">{{ message }}</pre>
+
+  {% if notes %}
+    <h2 style="font-size:15px">Loader notes</h2>
+    {% for n in notes %}<div class="note">{{ n }}</div>{% endfor %}
+  {% endif %}
+
+  {% if saved %}
+    <h2 style="font-size:15px;margin-top:16px">Files you uploaded</h2>
+    <ul class="tight">{% for f in saved %}<li>{{ f }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  <p class="hint" style="margin-top:18px">
+    The most common cause is a missing or renamed extract. Filenames tolerate case,
+    spaces, underscores and a trailing date, but not extra words in front —
+    <code>AD_Lost_Enquiry.xlsx</code> will not be accepted as <code>Enquiry.xlsx</code>.
+  </p>
+  <a class="btn" href="{{ url_for('index') }}">Try again</a>
+</div>
+{% endblock %}
