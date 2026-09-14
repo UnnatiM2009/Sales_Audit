@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+input/*.xlsx
+output/*.docx
+output/*.xlsx
+output/*.pdf
+output/history.json
+output/branches/
+!input/README.txt
+!output/README.txt
+
+# Physical audits captured on mobile during local testing
+output/physical/
+*.tmp
+.DS_Store
+.venv/
+venv/

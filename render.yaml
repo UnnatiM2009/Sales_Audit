@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: sales-audit-process
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --chdir webapp app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 180
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: AUDIT_RUN_TTL_HOURS
+        value: "6"
+      - key: AUDIT_MAX_UPLOAD_MB
+        value: "80"
+
+    # ------------------------------------------------------------------
+    # Physical audits captured on a phone, and the run history, both need
+    # to outlive a restart — a branch walked on Tuesday is scored on
+    # Friday. The free plan's filesystem is ephemeral and does not support
+    # disks, so on `plan: free` a capture is lost when the instance spins
+    # down. To keep them: change `plan: free` to `plan: starter` and
+    # uncomment the four lines below.
+    #
+    #   - key: AUDIT_PHYSICAL_DIR
+    #     value: /var/data/physical
+    #   - key: AUDIT_HISTORY_DIR
+    #     value: /var/data/history
+    #
+    # disk:
+    #   name: audit-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    # ------------------------------------------------------------------
