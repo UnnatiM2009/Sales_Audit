@@ -1,34 +1,34 @@
 {
   "schema": 1,
-  "updated": "2026-09-14T06:23:12",
+  "updated": "2026-09-17T13:52:38",
   "runs": [
     {
-      "run_at": "2026-09-14T06:23:12",
-      "label": "",
-      "period_start": "2026-08-01",
-      "period_end": "2026-08-29",
-      "days_covered": 29,
-      "index": 46.1,
-      "band": "Red \u2014 Critical",
-      "total_score": 22.56,
-      "scorable_weight": 48.98,
-      "enquiries": 5417,
-      "test_drives": 2150,
-      "bookings": 787,
-      "retails": 487,
+      "run_at": "2026-09-17T13:52:38",
+      "label": "Personal \u00b7 NAGPUR_KAMPTHEE ROAD",
+      "period_start": "2026-09-01",
+      "period_end": "2026-09-16",
+      "days_covered": 16,
+      "index": 66.5,
+      "band": "Orange \u2014 At risk",
+      "total_score": 39.34,
+      "scorable_weight": 59.15,
+      "enquiries": 300,
+      "test_drives": 152,
+      "bookings": 76,
+      "retails": 98,
       "pillars": {
-        "Demand generation and enquiry health": 54.8,
-        "Funnel conversion health": 55.1,
-        "Volume, order bank and market share": 89.3,
-        "Manpower health and productivity": 42.4,
-        "Stock and inventory health": 88.9,
-        "Financial and profitability health": 17.8,
-        "Customer experience health": 26.8,
-        "Systems and process compliance": 29.2,
-        "Demo fleet traceability": 54.0,
-        "Physical Audit Sheet": null
+        "Demand generation and enquiry health": 62.4,
+        "Funnel conversion health": 80.8,
+        "Volume, order bank and market share": 74.7,
+        "Manpower health and productivity": 100.0,
+        "Stock and inventory health": 85.9,
+        "Financial and profitability health": 17.4,
+        "Customer experience health": 28.7,
+        "Systems and process compliance": 41.5,
+        "Demo fleet traceability": 100.0,
+        "Physical Audit Sheet": 100.0
       },
-      "open_actions": 16
+      "open_actions": 12
     }
   ]
 }
