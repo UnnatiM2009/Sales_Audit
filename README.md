@@ -289,6 +289,90 @@ On the command line the equivalent is `--branch`, `--per-branch` and
 
 ---
 
+## Sales targets
+
+Drop `Sales_Target_-_Clean.xlsx` into `input/` alongside the extracts. It is a monthly
+plan, one row per location, manager and model, with enquiry, test drive, booking and
+retail figures. It scores four lines:
+
+| Line | Parameter |
+|---|---|
+| 1.1 | Enquiry volume against target |
+| 3.1 | Retail against target |
+| 3.5 | Test drive against target |
+| 3.6 | Booking against target |
+
+Scoring all four stages matters because retail alone can be met by burning the order
+bank while enquiry and test drive collapse. The four together show which part of the
+funnel is carrying the number.
+
+Two extra tabs appear in the findings workbook: **3a Target vs actual - branch** and
+**3b Target vs actual - manager**, plus **3c Unmapped plan locations**.
+
+### Each stage is scaled to its own extract's period
+
+The plan is monthly. The extracts are not all the same length — the enquiry book often
+covers three months while retails cover one. So each stage is scaled by the months
+*its own* extract spans, not by one shared figure:
+
+```
+1.1  5,417 enquiries (0.94 months)   monthly target 2,552 × 0.94 = 2,386
+3.1  487 invoiced   (0.90 months)    monthly target 321   × 0.90 = 290
+```
+
+Months holding a negligible share of the records are excluded first. Three back-dated
+invoices from February had stretched one August retail extract to 6.27 months and
+multiplied its target sixfold.
+
+### Names are mapped, not guessed
+
+The plan calls an outlet GNR; the DMS calls it GREAT_NAG_ROAD. The mapping lives in
+`norms.yaml` under `target_locations`. A plan location with no mapping contributes no
+target and is listed in tab 3c — an unmapped location would otherwise deflate the
+target and make the branch look better than it is.
+
+Managers are matched automatically: the plan writes "Jitu", the DMS writes "JITENDRA
+SHAHU". DMS spellings of the same person are merged first, since the DMS carries both
+"AVINASH SONWANE" and "AVINASH DHRJA SONWANE". Where the match is ambiguous the row is
+left unmatched and shown, rather than attributing one manager's retails to another.
+Override any of it under `target_managers`.
+
+A branch-scoped run is judged against that branch's slice of the plan.
+
+---
+
+## Photographs on the walk
+
+When an item is answered **Partial** or **No**, a *Take photo* button appears. Tapping it
+opens the camera, or the gallery if the shot was taken earlier. Several photos can be
+attached to one item, up to four.
+
+It is never required. A finding recorded without a photograph is still a finding, and an
+auditor should not be blocked by a flat battery or a dark yard. What the audit does
+instead is *report* which Partial and No answers carry no evidence, so the gap is visible
+rather than enforced.
+
+Photos are shrunk on the phone before upload — long edge 1400px, JPEG quality 0.72. A
+modern camera file is several megabytes, which on showroom wifi would take longer than
+the rest of the walk.
+
+They are stored beside the capture record, not inside it:
+
+```
+<physical store>/photos/<audit id>/<code>_<random>.jpg
+```
+
+A JSON record carrying four base64 images per item would be megabytes and would slow
+every answer. The exported `Physical_Audit_Sheet.xlsx` names them in the evidence
+column — `register at desk, gaps  [1 photo(s): P5.1_3595684f.png]` — so the trail
+survives into the workbook without bloating it.
+
+If an upload fails, the answer is already saved and stays saved; the page says so and
+lets the auditor retry. Changing an answer away from Partial or No keeps any photos
+already taken, since a mis-tap should not destroy evidence.
+
+---
+
 ## How the index works
 
 ```
