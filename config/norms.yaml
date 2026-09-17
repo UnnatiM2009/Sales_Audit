@@ -63,6 +63,16 @@ targets:
   sanctioned_sc: null           # sanctioned sales consultant headcount
   gross_margin_per_unit: null   # rupees
 
+# --- Which month the audit examines ----------------------------------------
+# An audit is run in one month and examines the one before it: run on
+# 17 September, it audits August. That gives a completed month with a whole
+# month's target, and no part-month arithmetic.
+#
+#   last      the month before the current one  (the default)
+#   current   the month in progress, scored month-to-date
+#   2026-08   a specific month
+audit_period: last
+
 # --- How to handle a partial period -------------------------------------------
 # Extracts pulled daily or mid-month cover fewer days than the norms assume.
 # Rate norms (conversion %) are unaffected by period length. Volume norms
@@ -76,6 +86,14 @@ period:
   min_days_to_score_volume: 7
   # Ageing threshold falls back to this when the extract spans less than 45 days.
   short_period_ageing_days: 15
+
+# --- Which booking stages count as a booking -------------------------------
+# "Booked" alone is the dealership's rule. Note that Alloted and Invoiced
+# rows were bookings too before they progressed, so counting only Booked
+# measures the standing order bank rather than bookings generated in the
+# period. Add them here if you want the latter.
+booking_stages_counted:
+  - Booked
 
 # --- Conversion and process norms ---
 norms:
