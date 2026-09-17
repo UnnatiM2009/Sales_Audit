@@ -1,0 +1,67 @@
+SALES PROCESS AUDIT — how to run it
+===================================
+
+There are two ways in. Pick whichever suits the day.
+
+
+1.  THE MONTHLY AUDIT  —  "Run Audit.bat"
+-----------------------------------------
+
+   a) Double-click  "Open Input Folder.bat"
+   b) Copy this month's exports into it:
+
+           Enquiry.xlsx
+           Booking.xlsx
+           Test Drive.xlsx
+           Retails.xlsx
+
+      and, if you have them:
+
+           Enquiry Concerns.xlsx
+           Test_Drive Concerns.xlsx
+           New_Vehicle_Delivery_Experience.xlsx
+           New_Vehicle_Delivery_Experience_30_Days.xlsx
+           Sales_Target_-_Clean.xlsx
+
+   c) Double-click  "Run Audit.bat"
+   d) Press Enter for the whole network, or B for one branch.
+
+   The reports folder opens by itself when it finishes.
+
+
+2.  THE SHOWROOM WALK  —  "START_AUDIT.bat"
+-------------------------------------------
+
+   Double-click it and leave the black window open. Then:
+
+     - on this laptop:  http://localhost:5000
+     - on a phone:      the same address, but with this laptop's
+                        IP instead of "localhost", and /m on the end.
+                        The phone must be on the same wifi.
+
+   Walk the showroom, tap Yes / Partial / No / N/A, and submit.
+
+   You do NOT need to export or copy anything afterwards. The next
+   time you run the audit it finds the walk by itself and scores
+   pillar J from it.
+
+   The same is true of a sheet filled in Excel: upload it on its own
+   and it is filed as a walk. Run the audit whenever you like
+   afterwards — the extracts and the walk do not have to arrive
+   together.
+
+
+WHAT YOU GET
+------------
+
+   output\Sales_Process_Audit.docx           the audit report
+   output\Sales_Process_Audit_Findings.xlsx  the evidence and exception lists
+
+
+IF IT STOPS
+-----------
+
+   The message in the black window says why. Almost always it is a
+   missing or renamed file in the input folder. Filenames may differ
+   in case, spaces, underscores and a trailing date — but not in
+   wording. AD_Lost_Enquiry.xlsx is not Enquiry.xlsx.

@@ -289,6 +289,42 @@ On the command line the equivalent is `--branch`, `--per-branch` and
 
 ---
 
+## Which month is audited
+
+An audit is run in one month and examines the one before it. Run on
+17 September, it audits **August** — a completed month, with a whole month's
+target and no part-month arithmetic.
+
+```bash
+python run_audit.py                    # last completed month
+python run_audit.py --month 2026-09    # a specific month
+```
+
+Change the default in `norms.yaml` under `audit_period`: `last`, `current`, or
+a specific `YYYY-MM`.
+
+Every dated extract is clipped to that month before anything is scored. Two
+things follow from that, both of which showed up on real data:
+
+**Stray rows stop distorting the period.** A retail extract with three
+back-dated invoices from February used to read as six months wide and
+multiplied its target sixfold. Now those rows are simply outside August and
+are dropped, with a line in the log saying how many.
+
+**An extract from the wrong month is refused, not scored.** If the enquiry
+file holds September rows and the audit month is August, line 1.1 is left
+unscored and says so by name:
+
+```
+1.1  Not scored — Enquiry.xlsx has no August 2026 rows (it covers 2026-09),
+     so this cannot be judged against the August 2026 target
+```
+
+The alternative — putting September's number under an August heading — is a
+worse outcome than a gap.
+
+---
+
 ## Sales targets
 
 Drop `Sales_Target_-_Clean.xlsx` into `input/` alongside the extracts. It is a monthly
