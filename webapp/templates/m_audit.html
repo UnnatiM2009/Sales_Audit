@@ -79,6 +79,26 @@
 .crithit{background:var(--red-bg);color:var(--red);border-radius:8px;padding:8px 11px;
          font-size:12.5px;margin-top:10px;display:none}
 .crithit.on{display:block}
+
+/* Photographs: offered on Partial and No, never demanded. */
+.q .photos{display:none;margin-top:10px}
+.q.partial .photos,.q.failed .photos{display:block}
+.phototog{background:#fff;border:1px solid var(--line);border-radius:8px;
+  padding:10px 14px;font-size:14px;font-weight:600;color:var(--navy);
+  cursor:pointer;font-family:inherit}
+.phototog:active{background:var(--light)}
+.phototog .cam{margin-right:5px}
+.phototog .pcount{color:var(--muted);font-weight:400;margin-left:4px}
+.phint{font-size:12px;color:var(--muted);margin-left:8px}
+.pstrip{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+.pthumb{position:relative;width:74px;height:74px;border-radius:7px;
+  overflow:hidden;border:1px solid var(--line);background:var(--band)}
+.pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pthumb.up{opacity:.45}
+.pthumb button{position:absolute;top:2px;right:2px;width:20px;height:20px;
+  border:0;border-radius:50%;background:rgba(0,0,0,.62);color:#fff;
+  font-size:13px;line-height:20px;padding:0;cursor:pointer}
+.pfail{font-size:12px;color:var(--red);margin-top:6px}
 </style>
 {% endblock %}
 
@@ -124,6 +144,16 @@
     </div>
     <div class="crithit">Critical item failed — this raises a corrective action in the
       report. Note what you saw so the branch cannot dispute it.</div>
+    <div class="photos">
+      <button type="button" class="phototog">
+        <span class="cam">📷</span> Take photo
+        <span class="pcount"></span>
+      </button>
+      <span class="phint">optional</span>
+      <input type="file" class="pfile" accept="image/*" capture="environment"
+             multiple hidden>
+      <div class="pstrip"></div>
+    </div>
     <div class="notes">
       <button type="button" class="notetog">Add what you saw
         <span class="dot" style="display:none">●</span></button>
@@ -163,6 +193,8 @@
 const ID   = {{ rec.id|tojson }};
 const SAVE   = {{ url_for('mobile.save_bulk', rec_id=rec.id)|tojson }};
 const SUBMIT = {{ url_for('mobile.submit', rec_id=rec.id)|tojson }};
+const PHOTO     = {{ url_for('mobile.add_photo', rec_id=rec.id)|tojson }};
+const PHOTO_DEL = {{ url_for('mobile.drop_photo', rec_id=rec.id)|tojson }};
 const QKEY = 'pa_q_' + ID, AKEY = 'pa_a_' + ID;
 
 // --- local mirror ---------------------------------------------------------
@@ -178,6 +210,15 @@ function write(key, val){
 }
 
 let answers = Object.assign({}, {{ rec.responses|tojson }}, read(AKEY, {}));
+
+// Photographs are held on the server, so the server's list always wins over
+// whatever the device happens to have cached.
+const SERVER_PHOTOS = {{ photos|tojson }};
+Object.keys(answers).forEach(c => { if(answers[c]) delete answers[c].photos; });
+Object.entries(SERVER_PHOTOS).forEach(([c, list]) => {
+  answers[c] = answers[c] || {};
+  answers[c].photos = list;
+});
 let queue   = read(QKEY, []);
 
 // --- elements -------------------------------------------------------------
@@ -243,7 +284,108 @@ function markCard(q){
     'on', a.r === 'NO' && q.dataset.critical === '1');
   const hasNote = !!(a.obs && a.obs.trim());
   q.querySelector('.notetog .dot').style.display = hasNote ? 'inline' : 'none';
+  paintPhotos(q, (a.photos || []));
 }
+
+// --- photographs ----------------------------------------------------------
+// Offered on Partial and No only, and never required. Images are shrunk on
+// the phone before upload: a modern camera file is several megabytes, which
+// on showroom wifi would take longer than the rest of the walk.
+const PHOTO_MAX_EDGE = 1400, PHOTO_QUALITY = 0.72;
+
+function paintPhotos(q, shots){
+  const strip = q.querySelector('.pstrip');
+  const count = q.querySelector('.pcount');
+  if(!strip) return;
+  count.textContent = shots.length ? '(' + shots.length + ')' : '';
+  strip.innerHTML = '';
+  shots.forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'pthumb';
+    d.innerHTML = '<img src="' + p.url + '" alt="">' +
+                  '<button type="button" title="Remove">×</button>';
+    d.querySelector('button').onclick = () => dropPhoto(q.dataset.code, p.file);
+    strip.appendChild(d);
+  });
+}
+
+function shrink(file){
+  return new Promise(resolve => {
+    if(!/^image\//.test(file.type)) return resolve(file);
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(img.width, img.height));
+      if(scale === 1 && file.size < 900000) return resolve(file);
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * scale);
+      cv.height = Math.round(img.height * scale);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      cv.toBlob(b => resolve(b || file), 'image/jpeg', PHOTO_QUALITY);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+async function uploadPhoto(code, file){
+  const q = document.getElementById('q-' + code);
+  const strip = q.querySelector('.pstrip');
+  const holder = document.createElement('div');
+  holder.className = 'pthumb up';
+  holder.innerHTML = '<img src="' + URL.createObjectURL(file) + '" alt="">';
+  strip.appendChild(holder);
+  try{
+    const small = await shrink(file);
+    const fd = new FormData();
+    fd.append('code', code);
+    fd.append('photo', small, (file.name || 'photo.jpg').replace(/\.[^.]+$/, '.jpg'));
+    const res = await fetch(PHOTO, {method:'POST', body: fd});
+    const j = await res.json();
+    if(!j.ok) throw new Error(j.error || 'Upload failed');
+    answers[code] = answers[code] || {};
+    answers[code].photos = j.photos;
+    write(AKEY, answers);
+    paint(q);
+  }catch(e){
+    holder.remove();
+    let msg = q.querySelector('.pfail');
+    if(!msg){ msg = document.createElement('div'); msg.className = 'pfail';
+              q.querySelector('.photos').appendChild(msg); }
+    // A failed photo must not cost the answer, which is already saved.
+    msg.textContent = 'Photo not uploaded (' + e.message +
+                      '). The answer is saved — try again when you have signal.';
+  }
+}
+
+async function dropPhoto(code, file){
+  try{
+    const res = await fetch(PHOTO_DEL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({code: code, file: file})});
+    const j = await res.json();
+    if(j.ok){
+      answers[code] = answers[code] || {};
+      answers[code].photos = j.photos;
+      write(AKEY, answers);
+      paint(document.getElementById('q-' + code));
+    }
+  }catch(e){}
+}
+
+document.addEventListener('click', e => {
+  const tog = e.target.closest('.phototog');
+  if(!tog) return;
+  tog.closest('.q').querySelector('.pfile').click();
+});
+
+document.addEventListener('change', e => {
+  const inp = e.target.closest('.pfile');
+  if(!inp || !inp.files.length) return;
+  const code = inp.closest('.q').dataset.code;
+  [...inp.files].forEach(f => uploadPhoto(code, f));
+  inp.value = '';
+});
 
 // --- syncing --------------------------------------------------------------
 let flushing = false, timer = null;

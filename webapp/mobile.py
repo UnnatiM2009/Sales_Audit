@@ -17,6 +17,13 @@ Routes (all under /m):
     /m/<id>/submit          finish the audit
     /m/<id>/reopen          reopen a submitted audit to correct it
     /m/<id>/sheet.xlsx      this branch's sheet, as Excel
+    /m/<id>/photo           POST a photograph against one check item
+    /m/<id>/photo/<file>    GET a stored photograph
+    /m/<id>/photo/delete    POST to remove one
+
+Photographs are offered on Partial and No, the two answers that need
+evidence. They are never required - a finding recorded without a photograph
+is still a finding, and an auditor should not be blocked by a flat battery.
 """
 from __future__ import annotations
 
@@ -93,9 +100,16 @@ def start():
 @bp.route("/<rec_id>")
 def audit(rec_id: str):
     rec = _rec(rec_id)
+    # Photographs live on the server, so their URLs are handed to the page
+    # rather than rebuilt from the device's local copy of the answers.
+    photos = {code: [_photo_json(rec_id, p) for p in (slot.get("photos") or [])]
+              for code, slot in (rec.get("responses") or {}).items()
+              if slot.get("photos")}
     return render_template("m_audit.html", rec=rec, groups=_items(),
                            prog=store.progress(rec),
-                           sections=store.section_progress(rec))
+                           sections=store.section_progress(rec),
+                           photos=photos,
+                           max_photos=store.MAX_PHOTOS_PER_ITEM)
 
 
 @bp.route("/<rec_id>/done")
@@ -149,6 +163,70 @@ def save_bulk(rec_id: str):
     return jsonify(ok=True, applied=applied, rejected=rejected,
                    progress=store.progress(rec),
                    sections=store.section_progress(rec))
+
+
+@bp.route("/<rec_id>/photo", methods=["POST"])
+def add_photo(rec_id: str):
+    """Attach a photograph to one check item.
+
+    Posted as multipart from the camera or the gallery. The phone shrinks the
+    image before sending, so what arrives is already small.
+    """
+    rec = _rec(rec_id)
+    if rec.get("submitted"):
+        return jsonify(ok=False, error="This audit has been submitted. "
+                                       "Reopen it before adding a photo."), 409
+    code = str(request.form.get("code", "")).strip()
+    f = request.files.get("photo")
+    if f is None or not f.filename:
+        return jsonify(ok=False, error="No photo received"), 400
+
+    data = f.read()
+    entry = store.add_photo(_store(), rec, code, data,
+                            content_type=f.mimetype or "",
+                            caption=request.form.get("caption", ""))
+    if entry is None:
+        return jsonify(ok=False, error="Could not attach that photo - it may be "
+                                       "too large, or this item already has "
+                                       f"{store.MAX_PHOTOS_PER_ITEM}."), 400
+    store.save(_store(), rec)
+    entry = dict(entry)
+    entry["url"] = url_for("mobile.get_photo", rec_id=rec_id, name=entry["file"])
+    return jsonify(ok=True, photo=entry,
+                   photos=[_photo_json(rec_id, p)
+                           for p in store.photos_for(rec, code)],
+                   progress=store.progress(rec))
+
+
+def _photo_json(rec_id: str, p: dict) -> dict:
+    out = dict(p)
+    out["url"] = url_for("mobile.get_photo", rec_id=rec_id, name=p["file"])
+    return out
+
+
+@bp.route("/<rec_id>/photo/<name>")
+def get_photo(rec_id: str, name: str):
+    _rec(rec_id)                      # 404 for an unknown audit
+    path = store.photo_path(_store(), rec_id, name)
+    if path is None:
+        abort(404)
+    return send_file(path, max_age=86400)
+
+
+@bp.route("/<rec_id>/photo/delete", methods=["POST"])
+def drop_photo(rec_id: str):
+    rec = _rec(rec_id)
+    if rec.get("submitted"):
+        return jsonify(ok=False, error="Already submitted"), 409
+    body = request.get_json(silent=True) or {}
+    code, name = str(body.get("code", "")), str(body.get("file", ""))
+    if not store.remove_photo(_store(), rec, code, name):
+        return jsonify(ok=False, error="No such photo"), 404
+    store.save(_store(), rec)
+    return jsonify(ok=True,
+                   photos=[_photo_json(rec_id, p)
+                           for p in store.photos_for(rec, code)],
+                   progress=store.progress(rec))
 
 
 @bp.route("/<rec_id>/submit", methods=["POST"])
