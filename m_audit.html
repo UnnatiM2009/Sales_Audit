@@ -1,0 +1,542 @@
+{% extends "m_base.html" %}
+{% block title %}{{ rec.branch }} — Physical Audit{% endblock %}
+
+{% block topbar %}
+<h1>{{ rec.branch }}<span class="sub" id="hdrsub">{{ prog.answered }} of {{ prog.total }} answered</span></h1>
+<span id="sync" class="syncdot" title="Saved">&#9679;</span>
+<a href="{{ url_for('mobile.home') }}">Exit</a>
+{% endblock %}
+
+{% block head %}
+<style>
+/* --- progress strip, pinned under the title bar ---------------------------*/
+.strip{position:sticky;top:var(--top);z-index:40;background:#fff;
+       border-bottom:1px solid var(--line);padding:8px 12px 0;
+       margin:-14px -12px 12px}
+.strip .bar{margin-bottom:8px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;
+       scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;border:1px solid var(--line);background:#fff;color:var(--navy);
+      border-radius:16px;padding:7px 13px;font-size:13px;font-family:inherit;
+      font-weight:600;white-space:nowrap;cursor:pointer}
+.chip .n{font-weight:400;color:var(--muted);font-size:11.5px;margin-left:4px}
+.chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.chip.on .n{color:#b9c8dd}
+.chip.full{border-color:var(--green)}
+.chip.full .n{color:var(--green)}
+.syncdot{font-size:11px;color:#8fd0a6;transition:color .2s}
+.syncdot.pending{color:#f0c674}
+.syncdot.offline{color:#e79a91}
+
+/* --- one check item -------------------------------------------------------*/
+/* Named qsec, not sec: .sec is already the secondary-button class in the base
+   stylesheet, and a collision here silently turns every Back button into a
+   section as far as querySelectorAll is concerned. */
+.qsec{display:none}
+.qsec.on{display:block}
+.qsec>h2{font-size:15px;color:var(--navy);margin:2px 0 10px}
+.q{background:#fff;border:1px solid var(--line);border-radius:12px;
+   padding:14px;margin-bottom:12px}
+.q.answered{border-color:#c3d3e6}
+.q.failed{border-left:4px solid var(--red)}
+.q.partial{border-left:4px solid var(--amber)}
+.q.yes{border-left:4px solid var(--green)}
+.q.na{border-left:4px solid var(--muted)}
+.q .code{font-size:11.5px;color:var(--muted);font-weight:700;letter-spacing:.4px}
+.q .item{font-size:15.5px;font-weight:600;margin:2px 0 8px;line-height:1.35}
+.q details{margin-bottom:10px}
+.q summary{font-size:13px;color:var(--blue);cursor:pointer;font-weight:600;
+           list-style:none;padding:2px 0}
+.q summary::-webkit-details-marker{display:none}
+.q summary::before{content:"› ";font-weight:700}
+.q details[open] summary::before{content:"⌄ "}
+.q .look{font-size:13.5px;color:var(--muted);padding:8px 10px;background:var(--band);
+         border-radius:8px;margin-top:4px}
+
+/* Four tap targets, each comfortably over the 44px minimum. */
+.ans{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.ans button{min-height:50px;border:1.5px solid var(--line);background:#fff;
+            border-radius:10px;font-family:inherit;font-size:14px;font-weight:700;
+            color:var(--muted);cursor:pointer;padding:4px 2px;line-height:1.15}
+.ans button:active{transform:scale(.97)}
+.ans button[data-v=YES].on{background:var(--green);border-color:var(--green);color:#fff}
+.ans button[data-v=PARTIAL].on{background:var(--amber);border-color:var(--amber);color:#fff}
+.ans button[data-v=NO].on{background:var(--red);border-color:var(--red);color:#fff}
+.ans button[data-v=NA].on{background:var(--muted);border-color:var(--muted);color:#fff}
+.notes{margin-top:10px}
+.notes textarea{font-size:15px}
+.notewrap{display:none}
+.notewrap.on{display:block}
+.notetog{font-size:13px;color:var(--blue);background:none;border:0;padding:6px 0;
+         font-family:inherit;font-weight:600;cursor:pointer}
+.notetog .dot{color:var(--green)}
+.nav{display:flex;gap:10px;margin:16px 0 4px}
+.nav .btn{margin-top:0}
+.banner{background:var(--amber-bg);color:var(--amber);border-radius:10px;
+        padding:10px 13px;font-size:13.5px;margin-bottom:12px;display:none}
+.banner.on{display:block}
+.crithit{background:var(--red-bg);color:var(--red);border-radius:8px;padding:8px 11px;
+         font-size:12.5px;margin-top:10px;display:none}
+.crithit.on{display:block}
+
+/* Photographs: offered on Partial and No, never demanded. */
+.q .photos{display:none;margin-top:10px}
+.q.partial .photos,.q.failed .photos{display:block}
+.phototog{background:#fff;border:1px solid var(--line);border-radius:8px;
+  padding:10px 14px;font-size:14px;font-weight:600;color:var(--navy);
+  cursor:pointer;font-family:inherit}
+.phototog:active{background:var(--light)}
+.phototog .cam{margin-right:5px}
+.phototog .pcount{color:var(--muted);font-weight:400;margin-left:4px}
+.phint{font-size:12px;color:var(--muted);margin-left:8px}
+.pstrip{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+.pthumb{position:relative;width:74px;height:74px;border-radius:7px;
+  overflow:hidden;border:1px solid var(--line);background:var(--band)}
+.pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pthumb.up{opacity:.45}
+.pthumb button{position:absolute;top:2px;right:2px;width:20px;height:20px;
+  border:0;border-radius:50%;background:rgba(0,0,0,.62);color:#fff;
+  font-size:13px;line-height:20px;padding:0;cursor:pointer}
+.pfail{font-size:12px;color:var(--red);margin-top:6px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="strip">
+  <div class="bar"><i id="pbar" style="width:{{ prog.pct_done }}%"></i></div>
+  <div class="chips" id="chips">
+    {% for g in groups %}
+      <button class="chip{% if loop.first %} on{% endif %}" data-i="{{ loop.index0 }}">
+        {{ g.num }}. {{ g.short }}<span class="n" data-count="{{ loop.index0 }}">
+        {{ sections[loop.index0].done }}/{{ g.checks|length }}</span>
+      </button>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="banner" id="offline">
+  Offline — your answers are being kept on this phone and will sync by themselves
+  when the signal comes back. Do not close this page.
+</div>
+
+{% for g in groups %}
+<section class="qsec{% if loop.first %} on{% endif %}" data-i="{{ loop.index0 }}">
+  <h2>{{ g.section }}</h2>
+  {% for it in g.checks %}
+  {% set saved = rec.responses.get(it.code) or {} %}
+  <div class="q" id="q-{{ it.code }}" data-code="{{ it.code }}"
+       data-weight="{{ it.weight }}" data-critical="{{ 1 if it.critical else 0 }}"
+       data-sec="{{ loop.index0 }}">
+    <div class="code">{{ it.code }}
+      {% if it.critical %}<span class="pill crit" style="margin-left:6px">CRITICAL</span>{% endif %}
+    </div>
+    <div class="item">{{ it.item }}</div>
+    <details>
+      <summary>What to look for</summary>
+      <div class="look">{{ it.what }}</div>
+    </details>
+    <div class="ans">
+      <button type="button" data-v="YES">Yes</button>
+      <button type="button" data-v="PARTIAL">Partial</button>
+      <button type="button" data-v="NO">No</button>
+      <button type="button" data-v="NA">N/A</button>
+    </div>
+    <div class="crithit">Critical item failed — this raises a corrective action in the
+      report. Note what you saw so the branch cannot dispute it.</div>
+    <div class="photos">
+      <button type="button" class="phototog">
+        <span class="cam">📷</span> Take photo
+        <span class="pcount"></span>
+      </button>
+      <span class="phint">optional</span>
+      <input type="file" class="pfile" accept="image/*" capture="environment"
+             multiple hidden>
+      <div class="pstrip"></div>
+    </div>
+    <div class="notes">
+      <button type="button" class="notetog">Add what you saw
+        <span class="dot" style="display:none">●</span></button>
+      <div class="notewrap">
+        <textarea placeholder="Evidence — e.g. 'register last filled 19-Aug, 41 walk-ins against 118 enquiries punched'"
+                  maxlength="600">{{ saved.get('obs', '') }}</textarea>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="nav">
+    <button class="btn sec" type="button" id="prev-{{ loop.index0 }}" data-go="{{ loop.index0 - 1 }}"
+            {% if loop.first %}style="visibility:hidden"{% endif %}>Back</button>
+    {% if loop.last %}
+      <button class="btn" type="button" id="finish">Review and submit</button>
+    {% else %}
+      <button class="btn" type="button" data-go="{{ loop.index }}">Next section</button>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+
+<div class="card" id="summary">
+  <h2>Where this stands</h2>
+  <p class="hint" id="sumline">{{ prog.answered }} of {{ prog.total }} answered.</p>
+  <button class="btn" type="button" id="submit">Submit this audit</button>
+  <p class="meta" style="margin-top:12px;text-align:center">
+    Submitting makes it available on the laptop. You can reopen it afterwards
+    if something needs correcting.
+  </p>
+</div>
+
+<script>
+(function(){
+"use strict";
+const ID   = {{ rec.id|tojson }};
+const SAVE   = {{ url_for('mobile.save_bulk', rec_id=rec.id)|tojson }};
+const SUBMIT = {{ url_for('mobile.submit', rec_id=rec.id)|tojson }};
+const PHOTO     = {{ url_for('mobile.add_photo', rec_id=rec.id)|tojson }};
+const PHOTO_DEL = {{ url_for('mobile.drop_photo', rec_id=rec.id)|tojson }};
+const QKEY = 'pa_q_' + ID, AKEY = 'pa_a_' + ID;
+
+// --- local mirror ---------------------------------------------------------
+// The phone is the source of truth until the server confirms. Everything is
+// kept on the device so a dropped signal, a locked screen or an accidental
+// back-swipe never costs the auditor a section of walking.
+function read(key, fallback){
+  try { return JSON.parse(localStorage.getItem(key)) || fallback; }
+  catch(e){ return fallback; }
+}
+function write(key, val){
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){}
+}
+
+let answers = Object.assign({}, {{ rec.responses|tojson }}, read(AKEY, {}));
+
+// Photographs are held on the server, so the server's list always wins over
+// whatever the device happens to have cached.
+const SERVER_PHOTOS = {{ photos|tojson }};
+Object.keys(answers).forEach(c => { if(answers[c]) delete answers[c].photos; });
+Object.entries(SERVER_PHOTOS).forEach(([c, list]) => {
+  answers[c] = answers[c] || {};
+  answers[c].photos = list;
+});
+let queue   = read(QKEY, []);
+
+// --- elements -------------------------------------------------------------
+const qs    = Array.from(document.querySelectorAll('.q'));
+const chips = Array.from(document.querySelectorAll('.chip'));
+const secs  = Array.from(document.querySelectorAll('.qsec'));
+const dot   = document.getElementById('sync');
+const pbar  = document.getElementById('pbar');
+const hdr   = document.getElementById('hdrsub');
+const sum   = document.getElementById('sumline');
+const banner= document.getElementById('offline');
+
+// --- scoring, mirrored from physical.score_physical ------------------------
+// Yes 2, Partial 1, No 0, each weighted by the item weight; NA drops out of
+// both sides. Computed on the phone so the score moves the instant you tap.
+const PTS = {YES:2, PARTIAL:1, NO:0};
+function tally(){
+  let answered=0, earned=0, possible=0, crit=0;
+  qs.forEach(q => {
+    const a = answers[q.dataset.code];
+    const r = a && a.r;
+    if(!r) return;
+    answered++;
+    if(r === 'NA') return;
+    const w = parseFloat(q.dataset.weight);
+    earned += w * PTS[r];
+    possible += w * 2;
+    if(PTS[r] === 0 && q.dataset.critical === '1') crit++;
+  });
+  return {answered, total: qs.length,
+          score: possible ? Math.round(earned/possible*1000)/10 : null, crit};
+}
+
+function paint(){
+  const t = tally();
+  const pct = Math.round(t.answered / t.total * 100);
+  pbar.style.width = pct + '%';
+  hdr.textContent = t.answered + ' of ' + t.total + ' answered';
+  let line = t.answered + ' of ' + t.total + ' answered';
+  if(t.score !== null) line += ' · running score ' + t.score + '%';
+  if(t.crit) line += ' · ' + t.crit + ' critical item' + (t.crit>1?'s':'') + ' failed';
+  sum.textContent = line + '.';
+  // section counters
+  chips.forEach((c,i) => {
+    const inSec = Array.from(secs[i].querySelectorAll('.q'));
+    const done  = inSec.filter(q => (answers[q.dataset.code]||{}).r).length;
+    const span  = c.querySelector('.n');
+    span.textContent = done + '/' + inSec.length;
+    c.classList.toggle('full', done === inSec.length);
+  });
+}
+
+function markCard(q){
+  const a = answers[q.dataset.code] || {};
+  q.querySelectorAll('.ans button').forEach(b =>
+    b.classList.toggle('on', b.dataset.v === a.r));
+  q.classList.remove('yes','partial','failed','na','answered');
+  if(a.r){
+    q.classList.add('answered');
+    q.classList.add({YES:'yes', PARTIAL:'partial', NO:'failed', NA:'na'}[a.r]);
+  }
+  q.querySelector('.crithit').classList.toggle(
+    'on', a.r === 'NO' && q.dataset.critical === '1');
+  const hasNote = !!(a.obs && a.obs.trim());
+  q.querySelector('.notetog .dot').style.display = hasNote ? 'inline' : 'none';
+  paintPhotos(q, (a.photos || []));
+}
+
+// --- photographs ----------------------------------------------------------
+// Offered on Partial and No only, and never required. Images are shrunk on
+// the phone before upload: a modern camera file is several megabytes, which
+// on showroom wifi would take longer than the rest of the walk.
+const PHOTO_MAX_EDGE = 1400, PHOTO_QUALITY = 0.72;
+
+function paintPhotos(q, shots){
+  const strip = q.querySelector('.pstrip');
+  const count = q.querySelector('.pcount');
+  if(!strip) return;
+  count.textContent = shots.length ? '(' + shots.length + ')' : '';
+  strip.innerHTML = '';
+  shots.forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'pthumb';
+    d.innerHTML = '<img src="' + p.url + '" alt="">' +
+                  '<button type="button" title="Remove">×</button>';
+    d.querySelector('button').onclick = () => dropPhoto(q.dataset.code, p.file);
+    strip.appendChild(d);
+  });
+}
+
+function shrink(file){
+  return new Promise(resolve => {
+    if(!/^image\//.test(file.type)) return resolve(file);
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(img.width, img.height));
+      if(scale === 1 && file.size < 900000) return resolve(file);
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * scale);
+      cv.height = Math.round(img.height * scale);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      cv.toBlob(b => resolve(b || file), 'image/jpeg', PHOTO_QUALITY);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+async function uploadPhoto(code, file){
+  const q = document.getElementById('q-' + code);
+  const strip = q.querySelector('.pstrip');
+  const holder = document.createElement('div');
+  holder.className = 'pthumb up';
+  holder.innerHTML = '<img src="' + URL.createObjectURL(file) + '" alt="">';
+  strip.appendChild(holder);
+  try{
+    const small = await shrink(file);
+    const fd = new FormData();
+    fd.append('code', code);
+    fd.append('photo', small, (file.name || 'photo.jpg').replace(/\.[^.]+$/, '.jpg'));
+    const res = await fetch(PHOTO, {method:'POST', body: fd});
+    const j = await res.json();
+    if(!j.ok) throw new Error(j.error || 'Upload failed');
+    answers[code] = answers[code] || {};
+    answers[code].photos = j.photos;
+    write(AKEY, answers);
+    paint(q);
+  }catch(e){
+    holder.remove();
+    let msg = q.querySelector('.pfail');
+    if(!msg){ msg = document.createElement('div'); msg.className = 'pfail';
+              q.querySelector('.photos').appendChild(msg); }
+    // A failed photo must not cost the answer, which is already saved.
+    msg.textContent = 'Photo not uploaded (' + e.message +
+                      '). The answer is saved — try again when you have signal.';
+  }
+}
+
+async function dropPhoto(code, file){
+  try{
+    const res = await fetch(PHOTO_DEL, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({code: code, file: file})});
+    const j = await res.json();
+    if(j.ok){
+      answers[code] = answers[code] || {};
+      answers[code].photos = j.photos;
+      write(AKEY, answers);
+      paint(document.getElementById('q-' + code));
+    }
+  }catch(e){}
+}
+
+document.addEventListener('click', e => {
+  const tog = e.target.closest('.phototog');
+  if(!tog) return;
+  tog.closest('.q').querySelector('.pfile').click();
+});
+
+document.addEventListener('change', e => {
+  const inp = e.target.closest('.pfile');
+  if(!inp || !inp.files.length) return;
+  const code = inp.closest('.q').dataset.code;
+  [...inp.files].forEach(f => uploadPhoto(code, f));
+  inp.value = '';
+});
+
+// --- syncing --------------------------------------------------------------
+let flushing = false, timer = null;
+
+function setDot(state){
+  dot.className = 'syncdot' + (state ? ' ' + state : '');
+  dot.title = state === 'offline' ? 'Saved on this phone — waiting for signal'
+            : state === 'pending' ? 'Saving…' : 'Saved';
+}
+
+function enqueue(code){
+  const a = answers[code] || {};
+  queue = queue.filter(e => e.code !== code);          // last answer wins
+  queue.push({code: code, response: a.r || '', observation: a.obs || ''});
+  write(QKEY, queue);
+  write(AKEY, answers);
+  setDot('pending');
+  clearTimeout(timer);
+  timer = setTimeout(flush, 400);
+}
+
+async function flush(){
+  if(flushing || !queue.length) return;
+  flushing = true;
+  const batch = queue.slice();
+  try{
+    const res = await fetch(SAVE, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({answers: batch})
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    // Drop only what we actually sent; a tap during the request stays queued.
+    const sent = new Set(batch.map(e => e.code));
+    queue = queue.filter(e => !sent.has(e.code));
+    write(QKEY, queue);
+    banner.classList.remove('on');
+    setDot(queue.length ? 'pending' : '');
+  }catch(err){
+    banner.classList.add('on');
+    setDot('offline');
+    setTimeout(flush, 6000);                    // keep trying quietly
+  }finally{
+    flushing = false;
+    if(queue.length) setTimeout(flush, 600);
+  }
+}
+
+window.addEventListener('online',  () => { banner.classList.remove('on'); flush(); });
+window.addEventListener('offline', () => { banner.classList.add('on'); setDot('offline'); });
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') flush();
+});
+window.addEventListener('beforeunload', e => {
+  if(queue.length){ e.preventDefault(); e.returnValue = ''; }
+});
+
+// --- interaction ----------------------------------------------------------
+qs.forEach(q => {
+  const code = q.dataset.code;
+  markCard(q);
+
+  q.querySelectorAll('.ans button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.v;
+      const a = answers[code] = answers[code] || {};
+      a.r = (a.r === v) ? '' : v;             // tapping again clears it
+      markCard(q);
+      paint();
+      enqueue(code);
+      if(navigator.vibrate) try{ navigator.vibrate(8); }catch(e){}
+      // A failed critical item needs evidence, so open the note box for it.
+      if(a.r === 'NO' && q.dataset.critical === '1'){
+        q.querySelector('.notewrap').classList.add('on');
+      }
+    });
+  });
+
+  const tog  = q.querySelector('.notetog');
+  const wrap = q.querySelector('.notewrap');
+  const ta   = q.querySelector('textarea');
+  if((answers[code] || {}).obs) wrap.classList.add('on');
+  tog.addEventListener('click', () => {
+    wrap.classList.toggle('on');
+    if(wrap.classList.contains('on')) ta.focus();
+  });
+  let t = null;
+  ta.addEventListener('input', () => {
+    const a = answers[code] = answers[code] || {};
+    a.obs = ta.value;
+    write(AKEY, answers);
+    clearTimeout(t);
+    t = setTimeout(() => { markCard(q); enqueue(code); }, 700);
+  });
+});
+
+// --- navigation -----------------------------------------------------------
+function go(i){
+  if(i < 0 || i >= secs.length) return;
+  secs.forEach((s,n) => s.classList.toggle('on', n === i));
+  chips.forEach((c,n) => c.classList.toggle('on', n === i));
+  const chip = chips[i];
+  if(chip) chip.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
+  window.scrollTo({top:0, behavior:'smooth'});
+  try{ localStorage.setItem('pa_sec_' + ID, String(i)); }catch(e){}
+}
+chips.forEach(c => c.addEventListener('click', () => go(parseInt(c.dataset.i,10))));
+document.querySelectorAll('[data-go]').forEach(b =>
+  b.addEventListener('click', () => go(parseInt(b.dataset.go,10))));
+document.getElementById('finish').addEventListener('click', () => {
+  document.getElementById('summary').scrollIntoView({behavior:'smooth'});
+});
+
+// --- submit ---------------------------------------------------------------
+document.getElementById('submit').addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  const t = tally();
+  if(t.answered === 0){ alert('Nothing has been answered yet.'); return; }
+  if(t.answered < t.total){
+    const left = t.total - t.answered;
+    if(!confirm(left + ' item' + (left>1?'s are':' is') + ' still unanswered. ' +
+                'Unanswered items are left out of the score rather than failed — ' +
+                'submit anyway?')) return;
+  }
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  await flush();
+  if(queue.length){
+    btn.disabled = false; btn.textContent = 'Submit this audit';
+    alert('Still offline — the last few answers have not reached the server yet. ' +
+          'Move to where there is signal and try again; nothing is lost.');
+    return;
+  }
+  try{
+    const res = await fetch(SUBMIT, {method:'POST'});
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'failed');
+    try{ localStorage.removeItem(QKEY); localStorage.removeItem(AKEY); }catch(e){}
+    window.location = data.redirect;
+  }catch(err){
+    btn.disabled = false; btn.textContent = 'Submit this audit';
+    alert('Could not submit: ' + err.message);
+  }
+});
+
+// --- boot -----------------------------------------------------------------
+paint();
+if(!navigator.onLine){ banner.classList.add('on'); setDot('offline'); }
+if(queue.length) flush();
+try{
+  const last = parseInt(localStorage.getItem('pa_sec_' + ID) || '0', 10);
+  if(last > 0 && last < secs.length) go(last);
+}catch(e){}
+})();
+</script>
+{% endblock %}
