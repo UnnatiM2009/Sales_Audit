@@ -33,7 +33,8 @@ from sales_audit import history
 from sales_audit import mobile_store as mstore
 from sales_audit.audit import run_audit
 from sales_audit.config import INPUT_FILES, Config
-from sales_audit.loaders import branches_present, filter_branches, load_all
+from sales_audit.loaders import (branches_present, filter_branches,
+                                 filter_segment, load_all, segments_present)
 from sales_audit import physical as physical_mod
 from sales_audit.physical import write_template
 from sales_audit.report_docx import write_report
@@ -47,7 +48,12 @@ CONFIG_PATH = Path(os.environ.get("AUDIT_CONFIG", BASE / "config" / "norms.yaml"
 # History outlives individual runs, so it lives outside the run directories.
 # On Render, point AUDIT_HISTORY_DIR at a persistent disk to keep the trend
 # across deploys; on the free plan it resets when the instance restarts.
-HISTORY_DIR = Path(os.environ.get("AUDIT_HISTORY_DIR", RUNS / "_history"))
+# Default to the project's own output folder rather than a temp directory, so
+# the web app and the command line agree on where walks and history live
+# without anyone having to set an environment variable. A walk captured in the
+# browser is then found by run_audit.py, which is the whole point of it.
+PROJECT_OUTPUT = Path(__file__).resolve().parent.parent / "output"
+HISTORY_DIR = Path(os.environ.get("AUDIT_HISTORY_DIR", PROJECT_OUTPUT))
 HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 RUN_TTL_HOURS = int(os.environ.get("AUDIT_RUN_TTL_HOURS", "6"))
 MAX_MB = int(os.environ.get("AUDIT_MAX_UPLOAD_MB", "80"))
@@ -127,7 +133,8 @@ def index():
     required = [s for s in INPUT_FILES if s.required]
     optional = [s for s in INPUT_FILES if not s.required]
     return render_template("index.html", required=required, optional=optional,
-                           cfg=cfg, max_mb=MAX_MB, branches=cfg.branches)
+                           cfg=cfg, max_mb=MAX_MB, branches=cfg.branches,
+                           segments=SEGMENTS, months=_month_options())
 
 
 @app.route("/checklist")
@@ -226,6 +233,66 @@ def _physical_for_run(d: Path, cfg, scope: str | None) -> tuple[Path | None, str
     return path, "mobile"
 
 
+SEGMENTS = ("Personal", "BEV", "Commercial", "LMM")
+
+
+def _month_options(n: int = 6) -> list[tuple[str, str]]:
+    """The last few completed months, newest first, for the picker."""
+    from sales_audit.period import last_completed_month, AuditPeriod
+    p = last_completed_month()
+    out = []
+    y, m = p.year, p.month
+    for _ in range(n):
+        out.append((AuditPeriod(y, m).key, AuditPeriod(y, m).label))
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    return out
+
+
+def _only_physical(input_dir: Path, saved: list[str]) -> bool:
+    """True when the upload is a Physical Audit Sheet and nothing else."""
+    if not saved:
+        return False
+    try:
+        from sales_audit.loaders import _resolve
+        bound, _ = _resolve(input_dir)
+    except Exception:  # noqa: BLE001
+        return False
+    return set(bound) == {"F11"}
+
+
+def _file_walk(input_dir: Path, saved: list[str]) -> list[dict]:
+    """Store an uploaded sheet as a capture, so later runs find it.
+
+    The sheet is converted into the same records the phone writes, which means
+    one store, one code path, and no second way for pillar J to arrive.
+    """
+    from sales_audit import mobile_store as mstore
+    from sales_audit.physical import read_physical, sheet_answers
+
+    path = input_dir / saved[0]
+    try:
+        by_branch = read_physical(path)
+    except Exception as e:  # noqa: BLE001
+        log.warning("uploaded sheet unreadable (%s)", e)
+        return []
+
+    out = []
+    for branch, df in by_branch.items():
+        answers = sheet_answers(df)
+        if not any(v.get("r") for v in answers.values()):
+            continue                       # a blank tab is not a walk
+        rec = mstore.blank(branch, auditor="uploaded sheet")
+        rec["responses"] = answers
+        rec["submitted"] = True
+        rec["submitted_at"] = datetime.now().isoformat(timespec="seconds")
+        rec["source_file"] = saved[0]
+        mstore.save(PHYSICAL_DIR, rec)
+        out.append(mstore.summary_row(rec))
+    return out
+
+
 @app.route("/run", methods=["POST"])
 def run():
     files = request.files.getlist("files")
@@ -253,6 +320,21 @@ def run():
         flash("No Excel files were uploaded. Expected .xlsx exports from the DMS.", "error")
         return redirect(url_for("index"))
 
+    # A Physical Audit Sheet uploaded on its own is not a failed audit - it is
+    # an auditor filing the showroom walk. Keep it, tell them it is kept, and
+    # use it automatically the next time the extracts are run. Refusing it and
+    # asking them to come back with five files at once is the app being rigid
+    # about an order of work that does not matter.
+    if _only_physical(d / "input", saved):
+        stored = _file_walk(d / "input", saved)
+        shutil.rmtree(d, ignore_errors=True)
+        if stored:
+            return render_template("sheet_saved.html", stored=stored,
+                                   saved=saved)
+        flash("That sheet could not be read. It should be the Physical Audit "
+              "Sheet, with a tab per branch.", "error")
+        return redirect(url_for("index"))
+
     # Capture the loader's warnings so the page can show which file bound where.
     records: list[str] = []
 
@@ -277,7 +359,12 @@ def run():
                   f"Branches found: {', '.join(branches) or 'none'}.", "error")
             return redirect(url_for("index"))
         physical, physical_source = _physical_for_run(d, cfg, scope)
-        result, detail, scoped_data = _build(d, data, cfg, physical, scope)
+        # Vehicle segment, if one was picked on the form.
+        choice_seg = (request.form.get("segment") or "").strip()
+        segment = next((x for x in SEGMENTS if x.lower() == choice_seg.lower()), None)
+        month = (request.form.get("month") or "").strip() or None
+        result, detail, scoped_data = _build(d, data, cfg, physical, scope,
+                                             segment=segment, audit_month=month)
 
     except FileNotFoundError as e:
         shutil.rmtree(d, ignore_errors=True)
@@ -296,6 +383,8 @@ def run():
 
     # Record the run so daily uploads build a trend, and compute movement.
     label = (request.form.get("label") or "").strip()[:40]
+    if segment:
+        label = (label + " · " if label else "") + segment
     if scope:
         label = (label + " · " if label else "") + scope
     move = {}
@@ -311,6 +400,8 @@ def run():
     summary["movement"] = move
     summary["branches"] = branches
     summary["scope"] = scope
+    summary["segment"] = segment
+    summary["segment_counts"] = segments_present(data)
     summary["physical_supplied"] = physical is not None
     summary["physical_source"] = physical_source
     summary["label"] = label
@@ -346,17 +437,26 @@ def _slug(name: str) -> str:
     return "".join(keep).strip("_") or "branch"
 
 
-def _build(d: Path, data, cfg, physical, scope: str | None):
+def _build(d: Path, data, cfg, physical, scope: str | None,
+           segment: str | None = None, audit_month: str | None = None):
     """Run the audit for one scope and write its two files.
 
-    `scope` is None for the whole network, otherwise a branch name. Each scope
-    gets its own output folder so branch files never overwrite each other.
+    `scope` is None for the whole network, otherwise a branch name; `segment`
+    is one of Personal, BEV, Commercial or LMM. Each combination gets its own
+    output folder, so a Personal audit of one branch never overwrites the
+    network file.
     """
     scoped = filter_branches(data, [scope]) if scope else data
-    result, detail = run_audit(scoped, cfg, physical, branch_scope=scope)
-    folder = d / "output" / (_slug(scope) if scope else "_network")
+    if segment:
+        scoped = filter_segment(scoped, segment)
+    result, detail = run_audit(scoped, cfg, physical, branch_scope=scope,
+                               audit_period=audit_month)
+    folder = d / "output" / ((_slug(segment) + "_" if segment else "")
+                             + (_slug(scope) if scope else "_network"))
     folder.mkdir(parents=True, exist_ok=True)
-    stem = "Sales_Process_Audit" + (f"_{_slug(scope)}" if scope else "")
+    stem = ("Sales_Process_Audit"
+            + (f"_{_slug(segment)}" if segment else "")
+            + (f"_{_slug(scope)}" if scope else ""))
     docx_path, xlsx_path = folder / f"{stem}.docx", folder / f"{stem}_Findings.xlsx"
     write_report(docx_path, result, scoped, cfg)
     write_findings(xlsx_path, result, scoped, cfg, detail)
@@ -451,7 +551,8 @@ def branch_results(run_id: str, branch: str):
         abort(404)
     physical, physical_source = _physical_for_run(d, cfg, branch)
     try:
-        result, detail, scoped = _build(d, data, cfg, physical, branch)
+        result, detail, scoped = _build(d, data, cfg, physical, branch,
+                                        segment=request.args.get("segment") or None)
     except Exception as e:  # noqa: BLE001
         log.exception("branch audit failed")
         return render_template("error.html", title=f"Could not audit {branch}",
@@ -472,21 +573,53 @@ def branch_results(run_id: str, branch: str):
 @app.route("/download/<run_id>/<what>")
 @app.route("/download/<run_id>/<what>/<branch>")
 def download(run_id: str, what: str, branch: str | None = None):
+    """Hand back one of the files a run produced.
+
+    The folder name encodes both the segment and the branch, but a link only
+    ever carried the branch - so a Personal audit of one outlet wrote to
+    Personal_BRANCH and the link looked for BRANCH, and 404'd. Rather than
+    thread the segment through every link, the folder is located by what is
+    actually on disk: exact match first, then the single folder ending in
+    that branch.
+    """
     d = run_dir(run_id)
-    folder = d / "output" / (_slug(branch) if branch else "_network")
-    stem = "Sales_Process_Audit" + (f"_{_slug(branch)}" if branch else "")
-    names = {
-        "report": (f"{stem}.docx", f"{stem}.docx"),
-        "findings": (f"{stem}_Findings.xlsx", f"{stem}_Findings.xlsx"),
-        "bundle": ("bundle.zip", f"{stem}.zip"),
-    }
-    if what not in names:
+    out = d / "output"
+    if what not in ("report", "findings", "bundle"):
         abort(404)
-    src, download_name = names[what]
-    path = folder / src
+
+    wanted = _slug(branch) if branch else "_network"
+    folder = out / wanted
+    if not folder.is_dir():
+        # Personal_NAGPUR_KAMPTHEE_ROAD when the link said NAGPUR_KAMPTHEE_ROAD.
+        matches = [p for p in out.iterdir()
+                   if p.is_dir() and (p.name == wanted or p.name.endswith("_" + wanted))]
+        if len(matches) == 1:
+            folder = matches[0]
+        elif not matches and len(list(out.iterdir())) == 1:
+            folder = next(out.iterdir())        # only one scope was ever built
+        else:
+            abort(404)
+
+    suffix = {"report": ".docx", "findings": "_Findings.xlsx", "bundle": None}[what]
+    if what == "bundle":
+        path = folder / "bundle.zip"
+        # Name the zip after the report inside it, so a download is
+        # recognisable in a Downloads folder six weeks later.
+        inside = sorted(folder.glob("Sales_Process_Audit*.docx"))
+        name = (inside[0].stem + ".zip") if inside else f"{folder.name}.zip"
+    else:
+        # The stem carries segment and branch, so read it off the file itself
+        # rather than rebuilding a name that has to match exactly.
+        hits = sorted(folder.glob(f"Sales_Process_Audit*{suffix}"))
+        if what == "report":
+            hits = [p for p in hits if not p.name.endswith("_Findings.xlsx")]
+        if not hits:
+            abort(404)
+        path, name = hits[0], hits[0].name
+
     if not path.exists():
         abort(404)
-    return send_file(path, as_attachment=True, download_name=download_name)
+    return send_file(path, as_attachment=True, download_name=name)
 
 
 @app.route("/history")

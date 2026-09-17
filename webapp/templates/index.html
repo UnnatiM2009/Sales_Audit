@@ -25,15 +25,28 @@
         </select>
       </div>
       <div>
+        <label class="meta" for="month"><strong>Audit month</strong></label><br>
+        <select name="month" id="month" style="margin-top:5px;width:180px">
+          {% for key, label in months %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="meta" for="segment"><strong>Segment</strong></label><br>
+        <select name="segment" id="segment" style="margin-top:5px;width:180px">
+          <option value="">All segments</option>
+          {% for s in segments %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
         <label class="meta" for="label">Label this run (optional)</label><br>
         <input type="text" name="label" id="label" maxlength="40"
                placeholder="e.g. MTD 24-Aug, or week 36"
                style="margin-top:5px;width:290px">
       </div>
     </div>
-    <p class="hint" style="margin-top:10px">Upload the same files either way — choosing a
-       branch scopes the audit to that outlet, and you can still switch branches from the
-       results page afterwards without uploading again.</p>
+    <p class="hint" style="margin-top:10px">The audit examines a completed month, so a run
+       today defaults to last month. Branch and segment narrow it further — Personal, BEV,
+       Commercial and LMM are separate businesses and are scored separately.</p>
     <div class="row" style="margin-top:18px">
       <button class="btn" type="submit" id="go" disabled>Run the audit</button>
       <a class="btn sec" href="{{ url_for('branch_hub') }}">Audit a single branch</a>

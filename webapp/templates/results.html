@@ -1,26 +1,42 @@
 {% extends "base.html" %}
-{% block subtitle %}{{ s.period }}{% endblock %}
+{% block subtitle %}{{ s.scope or "All branches" }}{% if s.segment %} · {{ s.segment }}{% endif %} · {{ s.period }}{% endblock %}
 {% block content %}
 
 {% set bandclass = s.band.split(' ')[0] %}
 
 {% if s.branches %}
 <div class="card">
-  <h2>Audit scope</h2>
-  <p class="hint">The network audit covers every branch together. Click a branch to audit
-     that outlet on its own, with its own report and workbook to download.</p>
-  <div class="branchbar">
-    <a href="{{ url_for('results', run_id=run_id) }}"
-       class="{{ 'on' if not s.scope }}">All branches</a>
-    {% for b in s.branches %}
-      <a href="{{ url_for('branch_results', run_id=run_id, branch=b) }}"
-         class="{{ 'on' if s.scope == b }}">{{ b }}</a>
-    {% endfor %}
-  </div>
+  {% if s.scope %}
+    {# A branch was chosen at upload, so this run is that branch's audit and
+       nothing else. Offering the other outlets here would invite scoring them
+       against files that were pulled for this one. #}
+    <h2>Audit scope</h2>
+    <p class="hint">This audit covers <strong>{{ s.scope }}</strong> only, from the files
+       uploaded for it. To audit another outlet, start a new audit and upload that
+       location's extracts.</p>
+    <div class="branchbar">
+      <a href="#" class="on" onclick="return false">{{ s.scope }}</a>
+    </div>
+    <p class="hint" style="margin-top:12px">
+      <a href="{{ url_for('index') }}">Audit another location →</a></p>
+  {% else %}
+    <h2>Audit scope</h2>
+    <p class="hint">This run covers every branch in the files uploaded. Click a branch to
+       see that outlet on its own, scored from the same extracts.</p>
+    <div class="branchbar">
+      <a href="{{ url_for('results', run_id=run_id) }}" class="on">All branches</a>
+      {% for b in s.branches %}
+        <a href="{{ url_for('branch_results', run_id=run_id, branch=b) }}">{{ b }}</a>
+      {% endfor %}
+    </div>
+  {% endif %}
 </div>
 {% endif %}
 
 <div class="card">
+  {% if s.segment %}
+    <div class="pill Green" style="margin-bottom:10px">{{ s.segment }} segment</div>
+  {% endif %}
   {% if s.scope %}
     <h2 style="margin-bottom:14px">{{ s.scope }} <span class="meta"
       style="font-weight:400">— branch audit</span></h2>
