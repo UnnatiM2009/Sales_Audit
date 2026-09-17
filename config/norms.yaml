@@ -22,8 +22,41 @@ dealership:
     - LMM_AMRAVATI_SMART
     - AMRAVATI_SMART_CV
 
+# --- Plan location -> DMS branch -------------------------------------------
+# The sales target file names outlets the way the plan does; the DMS names
+# them its own way. Map one to the other here. A plan location left out of
+# this map contributes no target, and is listed in the audit as unmapped
+# rather than silently dropped - an unmapped location deflates the target and
+# makes the branch look better than it is.
+#
+# Plan locations with no DMS equivalent (CORPORATE, DIGITAL and the like) can
+# be left out on purpose; they will be reported once and ignored.
+target_locations:
+  GNR:              GREAT_NAG_ROAD
+  "KAMPTEE ROAD":   NAGPUR_KAMPTHEE ROAD
+  "WARDHMAN NAGAR": NAGPUR_WARDHAMAN NGR
+  AMRAVATI:         AMRAVATI
+  YAVATMAL:         YAVATMAL
+  CHIKHALI:         CHIKHALI
+  # NAGPUR, AJNI, WARDHA, CORPORATE and DIGITAL have no single DMS branch.
+  # Map them once you decide which outlet each belongs to, for example:
+  # AJNI:           HINDUSTAN COLONY
+
+# --- Plan manager -> DMS sales manager -------------------------------------
+# The plan writes short names ("Jitu"), the DMS writes full ones ("JITENDRA
+# SHAHU"). Names are matched automatically on a shared prefix per token; add
+# an entry here only where the automatic match is wrong or ambiguous. An
+# ambiguous name is left unmatched and shown in the report rather than
+# guessed - attributing one manager's retails to another is worse than a gap.
+target_managers: {}
+  # "Gore":        SACHIN GORE
+  # "Jitu":        JITENDRA SHAHU
+
 # --- Targets that must come from the dealership; leave null if unavailable ---
 targets:
+  # These two are the fallback. When sales_target.xlsx is supplied it wins,
+  # because it carries the figure per location and per manager rather than one
+  # number for the whole dealership.
   enquiry_target: null          # enquiries expected in the audit month
   retail_target: null           # retails expected in the audit month
   market_share_norm: null       # % share norm for the territory
