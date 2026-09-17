@@ -13,6 +13,175 @@ from .loaders import AuditData
 from .scoring import pct
 
 
+def _stage_actuals(data: AuditData, by: str) -> dict:
+    """Actual counts per branch or per sales manager, all four stages.
+
+    `by` is "_branch" or "_sm". The manager column is the DMS Sales Manager;
+    the plan names managers its own way, so the two are matched on a
+    case-folded exact name and anything unmatched is shown rather than hidden.
+    """
+    enq, td, bk, rt = data.get("F3"), data.get("F5"), data.get("F4"), data.get("F6")
+    inv = rt[rt["_invoiced"]] if rt is not None and "_invoiced" in rt.columns else None
+    out: dict = {}
+
+    def add(df, stage, mask=None):
+        if df is None or by not in df.columns:
+            return
+        d = df if mask is None else df[mask]
+        for k, v in d.groupby(by).size().items():
+            key = str(k).strip()
+            if not key or key.lower() == "nan":
+                continue
+            out.setdefault(key, {}).setdefault(stage, 0)
+            out[key][stage] += int(v)
+
+    add(enq, "enquiry")
+    add(td, "test_drive", td["_completed"] if td is not None and "_completed" in td else None)
+    add(bk, "booking")
+    add(inv, "retail")
+
+    # A stage whose key column is entirely blank cannot be attributed. The
+    # retail extract's Team Lead column is routinely empty, and reporting
+    # every manager at 0% retail would read as total failure rather than as
+    # the missing attribution it is.
+    available = set()
+    for df, stage, in ((enq, "enquiry"), (td, "test_drive"),
+                       (bk, "booking"), (inv, "retail")):
+        if df is not None and by in df.columns:
+            col_ = df[by].astype(str).str.strip()
+            if (col_.notna() & (col_ != "") & (col_.str.lower() != "nan")).any():
+                available.add(stage)
+    return out, available
+
+
+def target_vs_actual(data: AuditData, cfg: Config, by: str = "branch") -> pd.DataFrame:
+    """Plan against achievement, by branch or by sales manager.
+
+    Targets are monthly and scaled to each extract's own period, exactly as
+    the scored lines are, so the percentages here and on the scorecard agree.
+    """
+    from .metrics import stage_months
+    from .targets import STAGES
+
+    book = getattr(data, "targets", None)
+    if book is None or book.empty:
+        return pd.DataFrame()
+
+    key_col = "_branch" if by == "branch" else "_sm"
+    actuals, available = _stage_actuals(data, key_col)
+    variants: dict = {}
+    if by == "manager":
+        from .targets import merge_dms_variants
+        actuals, variants = merge_dms_variants(actuals)
+    scope = getattr(data, "target_branch", None)
+
+    if by == "branch":
+        keys = book.branches()
+        if scope:
+            keys = [k for k in keys if k.upper() == scope.upper()]
+        resolved = {k: k for k in keys}
+        why = {}
+    else:
+        from .targets import match_manager
+        keys = book.managers(scope)
+        dms_names = sorted(actuals)
+        overrides = cfg.raw.get("target_managers") or {}
+        resolved, why = {}, {}
+        for k in keys:
+            hit, reason = match_manager(k, dms_names, overrides)
+            resolved[k] = hit
+            why[k] = reason
+        # Two plan names resolving to one DMS manager means the plan lists the
+        # same person twice. Their actuals would otherwise be counted against
+        # each row, so both are flagged rather than quietly double-counted.
+        seen: dict = {}
+        for k, hit in resolved.items():
+            if hit:
+                seen.setdefault(hit, []).append(k)
+        for hit, names in seen.items():
+            if len(names) > 1:
+                for k in names:
+                    others = [n for n in names if n != k]
+                    why[k] += (f" — plan also lists {', '.join(others)} against "
+                               f"this manager; actuals shown are the combined "
+                               f"figure, targets are not")
+
+    months = {s: stage_months(data, s) for s in STAGES.values()}
+    rows = []
+    for k in keys:
+        rec = {"Branch" if by == "branch" else "Manager": k}
+        if by == "manager":
+            rec["Location(s)"] = ", ".join(sorted(
+                {r.location for r in book.rows if r.manager == k and r.branch
+                 and (not scope or r.branch.upper() == scope.upper())}))
+        got = actuals.get(resolved.get(k) or "", {})
+        if by == "manager" and resolved.get(k) and not any(
+                r.manager == k and r.branch for r in book.rows):
+            why[k] += " — plan location not mapped, so no target is scored"
+        if by == "manager":
+            rec["DMS name"] = resolved.get(k) or "—"
+            alt = sorted({v for v, c in variants.items()
+                          if c == resolved.get(k) and v != c})
+            rec["Match"] = (why.get(k, "")
+                            + (f" (also spelled {'; '.join(alt)})" if alt else ""))
+        for stage in STAGES.values():
+            monthly = book.total(stage, k if by == "branch" else None,
+                                 None if by == "branch" else k)
+            monthly = monthly / max(len(book.months), 1)
+            m = months.get(stage) or 1.0
+            tgt = round(monthly * m, 1)
+            label = stage.replace("_", " ").title()
+            rec[f"{label} target"] = tgt
+            if stage not in available:
+                rec[f"{label} actual"] = "not attributable"
+                rec[f"{label} %"] = None
+            else:
+                act = int(got.get(stage, 0))
+                rec[f"{label} actual"] = act
+                rec[f"{label} %"] = pct(act, tgt) if tgt else None
+        rows.append(rec)
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # A manager in the DMS but absent from the plan still needs to be seen.
+    if by == "manager":
+        planned = {(resolved.get(k) or "").upper() for k in keys}
+        extra = [k for k in actuals if k.upper() not in planned]
+        for k in sorted(extra):
+            rec = {"Manager": k, "Location(s)": "not in plan",
+                   "DMS name": k, "Match": "in DMS, absent from plan"}
+            for stage in STAGES.values():
+                label = stage.replace("_", " ").title()
+                rec[f"{label} target"] = None
+                rec[f"{label} actual"] = (int(actuals[k].get(stage, 0))
+                                          if stage in available else "not attributable")
+                rec[f"{label} %"] = None
+            df = pd.concat([df, pd.DataFrame([rec])], ignore_index=True)
+    return df
+
+
+def unmapped_target_locations(data: AuditData) -> pd.DataFrame:
+    """Plan locations with no DMS branch, and what they were carrying."""
+    book = getattr(data, "targets", None)
+    if book is None or book.empty or not book.unmapped:
+        return pd.DataFrame()
+    n = max(len(book.months), 1)
+    rows = []
+    for loc in book.unmapped:
+        rs = [r for r in book.rows if r.location == loc]
+        rows.append({
+            "Plan location": loc,
+            "Managers": ", ".join(sorted({r.manager for r in rs if r.manager})),
+            "Enquiry target": round(sum(r.enq for r in rs) / n, 1),
+            "Test Drive target": round(sum(r.test_drive for r in rs) / n, 1),
+            "Booking target": round(sum(r.booking for r in rs) / n, 1),
+            "Retail target": round(sum(r.retail for r in rs) / n, 1),
+            "Status": "No DMS branch mapped - target excluded from scoring",
+        })
+    return pd.DataFrame(rows)
+
+
 def branch_funnel(data: AuditData, cfg: Config) -> pd.DataFrame:
     """Full funnel by branch, one row per outlet."""
     enq, td, bk, rt = data.get("F3"), data.get("F5"), data.get("F4"), data.get("F6")

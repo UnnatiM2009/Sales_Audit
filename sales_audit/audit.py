@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import exceptions as exc
+from . import targets as targets_mod
 from . import history, metrics, physical
 from .config import Config
 from .loaders import AuditData, audit_period
@@ -20,6 +21,18 @@ log = logging.getLogger(__name__)
 def run_audit(data: AuditData, cfg: Config,
               physical_path: Path | None = None,
               branch_scope: str | None = None) -> tuple[AuditResult, pd.DataFrame]:
+    # The sales target file, if supplied, drives lines 1.1, 3.1, 3.5 and 3.6.
+    # Read once here rather than in each builder.
+    if data.targets is None and data.get("F12") is not None:
+        ds = data.ds("F12")
+        try:
+            data.targets = targets_mod.load_targets(
+                (data.input_dir or Path(".")) / ds.filename, cfg)
+        except Exception as e:  # a malformed plan must not stop the audit
+            log.warning("Sales target file could not be read (%s)", e)
+    if branch_scope and not data.target_branch:
+        data.target_branch = branch_scope
+
     pillars: list[Pillar] = [b(data, cfg) for b in metrics.BUILDERS]
 
     # --- pillar J: physical audit --------------------------------------------
@@ -46,6 +59,9 @@ def run_audit(data: AuditData, cfg: Config,
     result.context = _build_context(data, cfg, result, detail)
     result.exceptions = {
         "branch_funnel": exc.branch_funnel(data, cfg),
+        "target_branch": exc.target_vs_actual(data, cfg, "branch"),
+        "target_manager": exc.target_vs_actual(data, cfg, "manager"),
+        "target_unmapped": exc.unmapped_target_locations(data),
         "vap_fields": exc.vap_field_audit(data),
         "retail_exceptions": exc.retail_exceptions(data, cfg),
         "sc_exceptions": exc.sc_exceptions(data, cfg),

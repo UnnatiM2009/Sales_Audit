@@ -72,6 +72,10 @@ class AuditData:
     datasets: dict[str, Dataset] = field(default_factory=dict)
     missing: list[InputSpec] = field(default_factory=list)
     input_dir: Path | None = None
+    # Set by run_audit once the target file is read. Kept on the data object
+    # so every pillar builder can reach it without changing their signature.
+    targets: object | None = None
+    target_branch: str | None = None
 
     def get(self, ref: str) -> pd.DataFrame | None:
         ds = self.datasets.get(ref)
@@ -235,6 +239,15 @@ def _normalise(df: pd.DataFrame, ref: str) -> pd.DataFrame:
     sc = col(df, "Sales Consultant", "SC Name", "Sales Consultant Name")
     df["_sc"] = sc.astype(str).str.strip() if sc is not None else pd.NA
 
+    # Unified sales-manager column, so targets can be reported manager-wise.
+    # The retail extract does not carry one, so retail actuals are attributed
+    # to a manager only where the DMS supplies the name.
+    # The retail extract names the column "Team Lead"; the others use
+    # "Sales Manager". Same role, so both feed the one normalised column.
+    sm = col(df, "Sales Manager", "Sales Manager Name", "SM Name",
+             "Team Lead", "Team Leader")
+    df["_sm"] = sm.astype(str).str.strip() if sm is not None else pd.NA
+
     if ref == "F3":  # Enquiry
         df["_enq_dt"] = parse_dt(col(df, "Enquiry Date"))
         df["_assign_dt"] = parse_dt(col(df, "Enq Assign Date"))
@@ -274,7 +287,12 @@ def filter_branches(data: AuditData, branches: list[str] | None) -> AuditData:
     if not branches:
         return data
     wanted = {str(b).strip().upper() for b in branches}
-    out = AuditData(missing=list(data.missing), input_dir=data.input_dir)
+    out = AuditData(missing=list(data.missing), input_dir=data.input_dir,
+                    targets=data.targets,
+                    # A branch audit is judged against that branch's slice of
+                    # the plan, so record which one this is.
+                    target_branch=(branches[0] if len(branches) == 1
+                                   else data.target_branch))
     for ref, ds in data.datasets.items():
         df = ds.df
         if "_branch" in df.columns:

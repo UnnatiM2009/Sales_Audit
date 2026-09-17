@@ -149,6 +149,19 @@ def write_findings(path: str | Path, result: AuditResult, data: AuditData,
             title="Index summary by pillar", rag_col=6)
 
     # --- exception tabs -------------------------------------------------------
+    w.frame("3a. Target vs actual - branch", ex.get("target_branch"),
+            title="Sales target against achievement, by branch",
+            note="Monthly plan scaled to the period each extract covers, so these "
+                 "percentages agree with lines 1.1, 3.1, 3.5 and 3.6 on the scorecard.")
+    w.frame("3b. Target vs actual - manager", ex.get("target_manager"),
+            title="Sales target against achievement, by sales manager",
+            note="Managers named in the plan, plus any manager recorded in the DMS "
+                 "but absent from the plan - those carry actuals with no target.")
+    w.frame("3c. Unmapped plan locations", ex.get("target_unmapped"),
+            title="Plan locations with no DMS branch",
+            note="These carry targets that cannot be scored because nothing in the "
+                 "DMS maps to them. Add them to target_locations in norms.yaml, or "
+                 "accept that their target sits outside the audit.")
     w.frame("3. Funnel by branch", ex.get("branch_funnel"),
             title="Full funnel by branch",
             note="Network conversion is the TOTAL row. Compare each branch against it.")

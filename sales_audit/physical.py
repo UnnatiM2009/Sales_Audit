@@ -270,9 +270,18 @@ def write_template(path, branches: list[str],
             resp = str(got.get("r", "") or "").title()      # YES -> Yes, NA -> Na
             if resp.upper() == "NA":
                 resp = "NA"
+            # A photograph taken on the walk is evidence, so the sheet says
+            # how many were attached. The files themselves stay in the capture
+            # store; naming them here keeps the trail without bloating the
+            # workbook.
+            shots = got.get("photos") or []
+            obs = got.get("obs", "")
+            if shots:
+                names = ", ".join(p.get("file", "") for p in shots)
+                obs = (obs + "  " if obs else "") + f"[{len(shots)} photo(s): {names}]"
             vals = [item.section, item.code, item.item, item.what_to_look_for,
                     item.weight, "CRITICAL" if item.critical else "", resp,
-                    got.get("obs", ""), got.get("owner", ""), got.get("due", "")]
+                    obs, got.get("owner", ""), got.get("due", "")]
             for j, v in enumerate(vals, 1):
                 c = s.cell(r, j, v)
                 c.font = Font(name="Arial", size=10,

@@ -11,8 +11,42 @@ import pandas as pd
 from .config import Config
 from .loaders import AuditData
 from .scoring import Line, Pillar, achievement, pct
+from .targets import months_covered, stage_target
 
 NOT_SUPPLIED = "source data not supplied"
+
+# Each funnel stage is judged against its own extract's period. The enquiry
+# book routinely spans three months while retails span one, and a monthly
+# target compared against a three-month count would fail a branch that is
+# actually on plan.
+STAGE_SOURCE = {
+    "enquiry": ("F3", "_enq_dt"),
+    "test_drive": ("F5", "_created_dt"),
+    "booking": ("F4", "_created_dt"),
+    "retail": ("F6", "_invoice_dt"),
+}
+
+
+def stage_months(data: AuditData, stage: str) -> float | None:
+    """Months covered by the extract that governs this stage."""
+    ref, col = STAGE_SOURCE[stage]
+    return months_covered(data.get(ref), col)
+
+
+def target_for(data: AuditData, stage: str,
+               branch: str | None = None) -> tuple[float | None, str]:
+    """Target for a stage from the plan, scaled to its extract's period."""
+    book = getattr(data, "targets", None)
+    return stage_target(book, stage, stage_months(data, stage), branch)
+
+
+def _target_branch(data: AuditData) -> str | None:
+    """The branch this run is scoped to, if any.
+
+    A branch-scoped run must be judged against that branch's slice of the
+    plan, not the whole network's.
+    """
+    return getattr(data, "target_branch", None)
 
 
 def period_days(data: AuditData) -> int | None:
@@ -77,15 +111,27 @@ def build_pillar_a(data: AuditData, cfg: Config) -> Pillar:
                 "Enquiries punched in DMS against the month's target",
                 "100% of target", weight=p.weight * 0.27,
                 source=data.src("F3", "Enquiry Number", "Enquiry Date"))
-    line.actual_text = f"{n:,} enquiries in the audit period"
-    scaled, note = prorate(target, data, cfg)
-    if scaled:
-        line.achievement = achievement(n, scaled)
-        line.remark = note or f"target {target:,}"
-    elif target:
-        line.unscored_reason = note or "period too short to judge the monthly target"
+    months = stage_months(data, "enquiry")
+    line.actual_text = (f"{n:,} enquiries in the audit period"
+                        + (f" ({months:.2f} months)" if months else ""))
+
+    plan, plan_note = target_for(data, "enquiry", _target_branch(data))
+    if plan:
+        line.achievement = achievement(n, plan)
+        line.remark = plan_note or f"target {plan:,.0f}"
+        line.source = (line.source + "  |  " + getattr(data, "targets").filename
+                       if getattr(data, "targets", None) else line.source)
     else:
-        line.unscored_reason = "enquiry target not supplied in norms.yaml"
+        scaled, note = prorate(target, data, cfg)
+        if scaled:
+            line.achievement = achievement(n, scaled)
+            line.remark = note or f"target {target:,}"
+        elif target:
+            line.unscored_reason = note or "period too short to judge the monthly target"
+        else:
+            line.unscored_reason = (plan_note or
+                                    "no sales target supplied - add sales_target.xlsx "
+                                    "or set enquiry_target in norms.yaml")
     p.lines.append(line)
 
     # --- 1.2 source mix -------------------------------------------------------
@@ -301,25 +347,37 @@ def build_pillar_c(data: AuditData, cfg: Config) -> Pillar:
     invoiced = int(rt["_invoiced"].sum()) if rt is not None else 0
     cancelled = int((~rt["_invoiced"]).sum()) if rt is not None else 0
 
+    branch = _target_branch(data)
+    book = getattr(data, "targets", None)
+
     line = Line("3.1", p.key, "Retail against target",
-                "Invoices raised against the month's retail target",
-                "100% of target", weight=p.weight * 0.38,
+                "Invoices raised against the retail target for the period",
+                "100% of target", weight=p.weight * 0.30,
                 source=data.src("F6", "Invoice Status"))
-    line.actual_text = f"{invoiced:,} invoiced, {cancelled:,} cancelled ({pct(cancelled, invoiced + cancelled)}%)"
-    tgt, note = prorate(cfg.target("retail_target"), data, cfg)
-    if tgt:
-        line.achievement = achievement(invoiced, tgt)
-        line.remark = note
-    elif cfg.target("retail_target"):
-        line.unscored_reason = note or "period too short to judge the monthly target"
+    line.actual_text = (f"{invoiced:,} invoiced, {cancelled:,} cancelled "
+                        f"({pct(cancelled, invoiced + cancelled)}%)")
+    plan, plan_note = target_for(data, "retail", branch)
+    if plan:
+        line.achievement = achievement(invoiced, plan)
+        line.remark = plan_note or f"target {plan:,.0f}"
+        line.source += "  |  " + book.filename
     else:
-        line.unscored_reason = "retail target not supplied in norms.yaml"
+        tgt, note = prorate(cfg.target("retail_target"), data, cfg)
+        if tgt:
+            line.achievement = achievement(invoiced, tgt)
+            line.remark = note
+        elif cfg.target("retail_target"):
+            line.unscored_reason = note or "period too short to judge the monthly target"
+        else:
+            line.unscored_reason = (plan_note or
+                                    "no sales target supplied - add sales_target.xlsx "
+                                    "or set retail_target in norms.yaml")
     p.lines.append(line)
 
     line = Line("3.2", p.key, "Order bank cover",
                 "Open confirmed bookings divided by monthly retail",
                 f"≥{cfg.norm('order_bank_cover_months')} months of cover",
-                weight=p.weight * 0.23, source=data.src("F4", "Booking Stage"))
+                weight=p.weight * 0.16, source=data.src("F4", "Booking Stage"))
     if bk is not None and "Booking Stage" in bk.columns and invoiced:
         open_bk = int(bk["Booking Stage"].isin(["Booked", "Alloted"]).sum())
         days = period_days(data)
@@ -342,19 +400,50 @@ def build_pillar_c(data: AuditData, cfg: Config) -> Pillar:
 
     line = Line("3.3", p.key, "Market share in territory",
                 "Registrations in the territory against segment total",
-                "≥ OEM share norm", weight=p.weight * 0.23,
+                "≥ OEM share norm", weight=p.weight * 0.14,
                 unscored_reason="VAHAN registration data not supplied")
     p.lines.append(line)
 
     line = Line("3.4", p.key, "Model and variant mix",
                 "Retail mix against planned mix",
-                "Within ±10% of plan for every model", weight=p.weight * 0.16,
+                "Within ±10% of plan for every model", weight=p.weight * 0.10,
                 source=data.src("F6", "Model Group"))
     if rt is not None and "Model Group" in rt.columns:
         top = rt[rt["_invoiced"]]["Model Group"].value_counts().head(4)
         line.actual_text = "; ".join(f"{k} {v}" for k, v in top.items())
     line.unscored_reason = "planned model mix not supplied"
     p.lines.append(line)
+
+    # --- 3.5 and 3.6: the middle of the funnel, against the same plan -------
+    # Retail alone can be met by burning the order bank while enquiry and test
+    # drive collapse. Scoring all four stages against plan shows which part of
+    # the funnel is actually carrying the number.
+    td = data.get("F5")
+    td_done = int(td["_completed"].sum()) if td is not None else 0
+    bookings = len(data.get("F4")) if data.get("F4") is not None else 0
+
+    for code, stage, name, count, wt, src in (
+            ("3.5", "test_drive", "Test drive against target", td_done, 0.15,
+             data.src("F5", "Stage")),
+            ("3.6", "booking", "Booking against target", bookings, 0.15,
+             data.src("F4", "Booking Number"))):
+        months = stage_months(data, stage)
+        line = Line(code, p.key, name,
+                    f"{name.split(' against')[0]}s recorded against the target "
+                    f"for the period",
+                    "100% of target", weight=p.weight * wt, source=src)
+        line.actual_text = (f"{count:,} recorded"
+                            + (f" over {months:.2f} months" if months else ""))
+        plan, plan_note = target_for(data, stage, branch)
+        if plan:
+            line.achievement = achievement(count, plan)
+            line.remark = plan_note or f"target {plan:,.0f}"
+            line.source += "  |  " + book.filename
+        else:
+            line.unscored_reason = (plan_note or
+                                    "no sales target supplied - add sales_target.xlsx")
+        p.lines.append(line)
+
     return p
 
 

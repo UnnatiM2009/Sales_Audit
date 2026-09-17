@@ -28,6 +28,15 @@ from .physical import CHECKLIST, RESPONSES, SECTIONS
 VALID = {"YES", "PARTIAL", "NO", "NA"}
 _LOOKUP = {c.code: c for c in CHECKLIST}
 
+# Photographs are offered on Partial and No - the answers that need evidence.
+# They are never required: an auditor standing in a dark yard with a flat
+# battery must still be able to record the finding.
+PHOTO_ANSWERS = {"PARTIAL", "NO"}
+PHOTO_EXT = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+             "image/webp": ".webp", "image/heic": ".heic", "image/heif": ".heif"}
+MAX_PHOTOS_PER_ITEM = 4
+MAX_PHOTO_BYTES = 8 * 1024 * 1024
+
 
 # --- identity ----------------------------------------------------------------
 def new_id() -> str:
@@ -87,6 +96,7 @@ def delete(store: Path, rec_id: str) -> bool:
     for p in Path(store).glob(f"*__{rec_id}.json"):
         try:
             p.unlink()
+            delete_photos(store, rec_id)
             return True
         except OSError:
             return False
@@ -118,6 +128,97 @@ def latest_per_branch(store: Path, submitted_only: bool = True) -> dict[str, dic
     return out
 
 
+# --- photographs -------------------------------------------------------------
+def photo_dir(store: Path, rec_id: str) -> Path:
+    return Path(store) / "photos" / str(rec_id)
+
+
+def add_photo(store: Path, rec: dict, code: str, data: bytes,
+              content_type: str = "", caption: str = "") -> dict | None:
+    """Attach one photograph to a check item.
+
+    Returns the stored entry, or None if the item is unknown, the file is
+    empty or too large, or the item already holds the maximum. Photographs
+    live beside the record rather than inside it: a JSON file carrying four
+    base64 images per item would be megabytes and slow every save.
+    """
+    if code not in _LOOKUP or not data:
+        return None
+    if len(data) > MAX_PHOTO_BYTES:
+        return None
+    slot = rec.setdefault("responses", {}).setdefault(code, {})
+    shots = slot.setdefault("photos", [])
+    if len(shots) >= MAX_PHOTOS_PER_ITEM:
+        return None
+
+    ext = PHOTO_EXT.get(str(content_type).lower().split(";")[0].strip(), ".jpg")
+    name = f"{code}_{secrets.token_hex(4)}{ext}"
+    d = photo_dir(store, rec["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, d / name)
+
+    entry = {"file": name, "bytes": len(data),
+             "added": datetime.now().isoformat(timespec="seconds")}
+    if caption:
+        entry["caption"] = str(caption)[:120]
+    shots.append(entry)
+    return entry
+
+
+def remove_photo(store: Path, rec: dict, code: str, name: str) -> bool:
+    slot = (rec.get("responses") or {}).get(code) or {}
+    shots = slot.get("photos") or []
+    keep = [s for s in shots if s.get("file") != name]
+    if len(keep) == len(shots):
+        return False
+    slot["photos"] = keep
+    if not keep:
+        slot.pop("photos", None)
+    try:
+        (photo_dir(store, rec["id"]) / name).unlink()
+    except OSError:
+        pass
+    return True
+
+
+def photo_path(store: Path, rec_id: str, name: str) -> Path | None:
+    """Resolve a stored photograph, refusing anything path-like."""
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        return None
+    p = photo_dir(store, rec_id) / name
+    return p if p.is_file() else None
+
+
+def photos_for(rec: dict, code: str) -> list[dict]:
+    return ((rec.get("responses") or {}).get(code) or {}).get("photos") or []
+
+
+def photo_count(rec: dict) -> int:
+    return sum(len(photos_for(rec, c.code)) for c in CHECKLIST)
+
+
+def photos_missing(rec: dict) -> list[str]:
+    """Codes answered Partial or No that carry no photograph.
+
+    Reported, never enforced - the point is to show the auditor what has no
+    evidence attached, not to block them from finishing the walk.
+    """
+    out = []
+    for item in CHECKLIST:
+        slot = (rec.get("responses") or {}).get(item.code) or {}
+        if slot.get("r") in PHOTO_ANSWERS and not slot.get("photos"):
+            out.append(item.code)
+    return out
+
+
+def delete_photos(store: Path, rec_id: str) -> None:
+    import shutil
+    shutil.rmtree(photo_dir(store, rec_id), ignore_errors=True)
+
+
 # --- response handling -------------------------------------------------------
 def set_response(rec: dict, code: str, response: str | None = None,
                  observation: str | None = None, owner: str | None = None,
@@ -140,6 +241,8 @@ def set_response(rec: dict, code: str, response: str | None = None,
         slot["owner"] = str(owner)[:60]
     if due is not None:
         slot["due"] = str(due)[:20]
+    # An answer moved off Partial or No keeps its photographs: the evidence
+    # was still taken, and an auditor correcting a mis-tap should not lose it.
     if not slot:
         rec["responses"].pop(code, None)
     return True
@@ -177,6 +280,8 @@ def progress(rec: dict) -> dict:
                 })
     total = len(CHECKLIST)
     return {
+        "photos": photo_count(rec),
+        "photos_missing": len(photos_missing(rec)),
         "answered": answered,
         "total": total,
         "remaining": total - answered,
@@ -211,6 +316,7 @@ def summary_row(rec: dict) -> dict:
         "submitted": bool(rec.get("submitted")),
         "answered": p["answered"], "total": p["total"], "pct_done": p["pct_done"],
         "score": p["score"], "criticals": len(p["criticals"]),
+        "photos": p["photos"], "photos_missing": p["photos_missing"],
     }
 
 
