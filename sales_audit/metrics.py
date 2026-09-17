@@ -27,15 +27,73 @@ STAGE_SOURCE = {
 }
 
 
+def stage_window(data: AuditData, stage: str):
+    """(first, last) date covered by the extract governing a stage."""
+    import pandas as pd
+    ref, col = STAGE_SOURCE[stage]
+    df = data.get(ref)
+    if df is None or col not in df.columns:
+        return None
+    sr = df[col].dropna()
+    if sr.empty:
+        return None
+    counts = sr.dt.to_period("M").value_counts()
+    keep = counts[counts >= max(1, len(sr) * 0.02)].index
+    sr = sr[sr.dt.to_period("M").isin(keep)]
+    return (sr.min(), sr.max()) if not sr.empty else None
+
+
+def periods_overlap(data: AuditData, a: str, b: str) -> float | None:
+    """How much two stages' extracts cover the same days, 0.0 to 1.0.
+
+    Conversion between two stages is only meaningful when both extracts
+    describe the same period. Comparing September bookings against August
+    invoices produces a number above 100% and no insight at all.
+    """
+    wa, wb = stage_window(data, a), stage_window(data, b)
+    if not wa or not wb:
+        return None
+    start, end = max(wa[0], wb[0]), min(wa[1], wb[1])
+    if end < start:
+        return 0.0
+    shared = (end.normalize() - start.normalize()).days + 1
+    span = max((wa[1].normalize() - wa[0].normalize()).days + 1,
+               (wb[1].normalize() - wb[0].normalize()).days + 1)
+    return round(shared / span, 3) if span else None
+
+
 def stage_months(data: AuditData, stage: str) -> float | None:
     """Months covered by the extract that governs this stage."""
     ref, col = STAGE_SOURCE[stage]
     return months_covered(data.get(ref), col)
 
 
+def stage_off_period(data: AuditData, stage: str) -> str:
+    """Why this stage's extract does not describe the audit month, if so.
+
+    An enquiry file full of September rows cannot answer an August target.
+    Scoring it anyway would put the wrong month's number under the right
+    month's heading, which is worse than leaving the line unscored.
+    """
+    notes = getattr(data, "period_notes", None) or {}
+    period = getattr(data, "period", None)
+    if not notes or period is None:
+        return ""
+    ref = STAGE_SOURCE[stage][0]
+    note = notes.get(ref)
+    if not note or not note.get("empty"):
+        return ""
+    covers = ", ".join(note.get("months", {})) or "no dated rows"
+    return (f"{note['file']} has no {period.label} rows (it covers {covers}), "
+            f"so this cannot be judged against the {period.label} target")
+
+
 def target_for(data: AuditData, stage: str,
                branch: str | None = None) -> tuple[float | None, str]:
     """Target for a stage from the plan, scaled to its extract's period."""
+    off = stage_off_period(data, stage)
+    if off:
+        return None, off
     book = getattr(data, "targets", None)
     return stage_target(book, stage, stage_months(data, stage), branch)
 
@@ -240,7 +298,8 @@ def build_pillar_b(data: AuditData, cfg: Config) -> Pillar:
     enq, td, bk, rt = data.get("F3"), data.get("F5"), data.get("F4"), data.get("F6")
     n = len(enq) if enq is not None else 0
     td_done = int(td["_completed"].sum()) if td is not None else 0
-    bookings = len(bk) if bk is not None else 0
+    bookings = int(bk["_booked"].sum()) if bk is not None and "_booked" in bk else (
+        len(bk) if bk is not None else 0)
     invoiced = int(rt["_invoiced"].sum()) if rt is not None else 0
 
     # 2.1 enquiry to test drive, by source
@@ -268,9 +327,13 @@ def build_pillar_b(data: AuditData, cfg: Config) -> Pillar:
                 "Bookings created against completed test drives",
                 f"≥{cfg.norm('td_to_booking_pct')}%", weight=p.weight * 0.20,
                 source=f"{data.src('F4')} + {data.src('F5')}")
-    if td_done and bookings:
-        v = pct(bookings, td_done)
-        line.actual_text = f"{bookings:,} bookings from {td_done:,} completed test drives = {v}%"
+    # Same reasoning as 2.3: a test drive that led to a booking counts even
+    # if that booking has since been invoiced.
+    _all_bk = len(bk) if bk is not None else 0
+    if td_done and _all_bk:
+        v = pct(_all_bk, td_done)
+        line.actual_text = (f"{_all_bk:,} bookings from {td_done:,} completed "
+                            f"test drives = {v}%")
         line.achievement = achievement(v, cfg.norm("td_to_booking_pct"))
         line.remark = f"{round(cfg.norm('td_to_booking_pct') - v, 1)} points below norm" if v < cfg.norm("td_to_booking_pct") else "within norm"
     else:
@@ -282,11 +345,25 @@ def build_pillar_b(data: AuditData, cfg: Config) -> Pillar:
                 "Invoices raised against bookings created",
                 f"≥{cfg.norm('booking_to_retail_pct')}%", weight=p.weight * 0.20,
                 source=f"{data.src('F4', 'Booking Stage')} + {data.src('F6', 'Invoice Status')}")
-    if bookings and invoiced:
-        v = pct(invoiced, bookings)
-        line.actual_text = f"{invoiced:,} invoiced from {bookings:,} bookings = {v}%"
+    # Conversion needs every booking in the denominator, not just those still
+    # sitting at "Booked". A booking that reached Invoiced converted - leaving
+    # it out would divide by the failures alone and report over 100%.
+    all_bookings = len(bk) if bk is not None else 0
+    overlap = periods_overlap(data, "booking", "retail")
+    if overlap is not None and overlap < 0.5:
+        wb, wr = stage_window(data, "booking"), stage_window(data, "retail")
+        line.actual_text = (
+            f"{all_bookings:,} bookings ({wb[0]:%d-%b} to {wb[1]:%d-%b}) against "
+            f"{invoiced:,} invoices ({wr[0]:%d-%b} to {wr[1]:%d-%b})")
+        line.unscored_reason = (
+            "the booking and retail extracts cover different periods, so this "
+            "conversion would be meaningless - pull both for the same month")
+    elif all_bookings and invoiced:
+        v = pct(invoiced, all_bookings)
+        line.actual_text = (f"{invoiced:,} invoiced from {all_bookings:,} bookings "
+                            f"= {v}%")
         line.achievement = achievement(v, cfg.norm("booking_to_retail_pct"))
-        line.remark = f"{bookings - invoiced:,} bookings unconverted in the period"
+        line.remark = f"{all_bookings - invoiced:,} bookings unconverted in the period"
     else:
         line.unscored_reason = NOT_SUPPLIED
     p.lines.append(line)
@@ -420,7 +497,9 @@ def build_pillar_c(data: AuditData, cfg: Config) -> Pillar:
     # the funnel is actually carrying the number.
     td = data.get("F5")
     td_done = int(td["_completed"].sum()) if td is not None else 0
-    bookings = len(data.get("F4")) if data.get("F4") is not None else 0
+    _bk = data.get("F4")
+    bookings = (int(_bk["_booked"].sum()) if _bk is not None and "_booked" in _bk
+                else (len(_bk) if _bk is not None else 0))
 
     for code, stage, name, count, wt, src in (
             ("3.5", "test_drive", "Test drive against target", td_done, 0.15,

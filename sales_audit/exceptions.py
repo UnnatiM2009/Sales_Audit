@@ -37,7 +37,7 @@ def _stage_actuals(data: AuditData, by: str) -> dict:
 
     add(enq, "enquiry")
     add(td, "test_drive", td["_completed"] if td is not None and "_completed" in td else None)
-    add(bk, "booking")
+    add(bk, "booking", bk["_booked"] if bk is not None and "_booked" in bk else None)
     add(inv, "retail")
 
     # A stage whose key column is entirely blank cannot be attributed. The
@@ -148,6 +148,7 @@ def target_vs_actual(data: AuditData, cfg: Config, by: str = "branch") -> pd.Dat
     if by == "manager":
         planned = {(resolved.get(k) or "").upper() for k in keys}
         extra = [k for k in actuals if k.upper() not in planned]
+        extra_rows: list[dict] = []
         for k in sorted(extra):
             rec = {"Manager": k, "Location(s)": "not in plan",
                    "DMS name": k, "Match": "in DMS, absent from plan"}
@@ -157,7 +158,12 @@ def target_vs_actual(data: AuditData, cfg: Config, by: str = "branch") -> pd.Dat
                 rec[f"{label} actual"] = (int(actuals[k].get(stage, 0))
                                           if stage in available else "not attributable")
                 rec[f"{label} %"] = None
-            df = pd.concat([df, pd.DataFrame([rec])], ignore_index=True)
+            # Build the frame from a list rather than growing it row by row:
+            # concatenating an all-NA frame is deprecated in pandas 2.2.
+            extra_rows.append(rec)
+    if by == "manager" and extra_rows:
+        df = pd.concat([df, pd.DataFrame(extra_rows).reindex(columns=df.columns)],
+                       ignore_index=True)
     return df
 
 
@@ -192,7 +198,9 @@ def branch_funnel(data: AuditData, cfg: Config) -> pd.DataFrame:
     for b in sorted(enq["_branch"].dropna().unique()):
         e = int((enq["_branch"] == b).sum())
         t = int(((td["_branch"] == b) & td["_completed"]).sum()) if td is not None else 0
-        k = int((bk["_branch"] == b).sum()) if bk is not None else 0
+        k = (int(((bk["_branch"] == b) & bk["_booked"]).sum())
+             if bk is not None and "_booked" in bk
+             else (int((bk["_branch"] == b).sum()) if bk is not None else 0))
         r = int((inv["_branch"] == b).sum()) if len(inv) else 0
         sc = enq.loc[enq["_branch"] == b, "_sc"].nunique()
         rows.append({
@@ -207,7 +215,9 @@ def branch_funnel(data: AuditData, cfg: Config) -> pd.DataFrame:
     total = {
         "Branch": "TOTAL", "SCs": enq["_sc"].nunique(), "Enquiries": len(enq),
         "TD completed": int(td["_completed"].sum()) if td is not None else 0,
-        "Bookings": len(bk) if bk is not None else 0, "Retails": len(inv),
+        "Bookings": (int(bk["_booked"].sum()) if bk is not None and "_booked" in bk
+                     else (len(bk) if bk is not None else 0)),
+        "Retails": len(inv),
     }
     total["Enq→TD %"] = pct(total["TD completed"], total["Enquiries"])
     total["TD→Book %"] = pct(total["Bookings"], total["TD completed"])
@@ -346,7 +356,15 @@ def complaints(data: AuditData, cfg: Config) -> pd.DataFrame:
     specs = [("F7", "Enquiry", "Rating", "Comment", "Sales Consultant Name"),
              ("F8", "Test drive", "Rating", "Comment", "Sales Consultant Name"),
              ("F9", "Delivery", "Response", "Customer Comment", "Sales Consultant Contact"),
-             ("F10", "30-day", "Ratings", "Customer Comment", "Sales Consultant Contact")]
+             ("F10", "30-day", "Ratings", "Customer Comment", "Sales Consultant Contact"),
+             # Both of these are surveys sent after the customer walked away,
+             # so they say why rather than how it felt. That makes them the
+             # only direct evidence behind a lost enquiry or a cancelled
+             # booking, which the DMS records only as a reason code.
+             ("F13", "Lost enquiry", "Response 1", "Response 2",
+              "Sales Consultant Name"),
+             ("F14", "Booking cancelled", "Booking Cancellation Response",
+              "Customer Comment", "Sales Consultant Name")]
     for ref, stage, rating_col, comment_col, sc_col in specs:
         df = data.get(ref)
         if df is None:

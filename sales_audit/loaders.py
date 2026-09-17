@@ -76,6 +76,9 @@ class AuditData:
     # so every pillar builder can reach it without changing their signature.
     targets: object | None = None
     target_branch: str | None = None
+    segment: str | None = None
+    period: object | None = None
+    period_notes: dict | None = None
 
     def get(self, ref: str) -> pd.DataFrame | None:
         ds = self.datasets.get(ref)
@@ -101,20 +104,27 @@ def _norm_stem(path: Path) -> str:
     return re.sub(r"[\s_\-]+", " ", path.stem.lower()).strip()
 
 
-def _matches(stem: str, target: str) -> int | None:
+def _matches(stem: str, target: str, allow_suffix: bool = False) -> int | None:
     """Score how well a filename stem matches a target. Lower is better.
 
     Only a prefix match counts, so 'ad lost enquiry' can never match 'enquiry'.
     A trailing date stamp is allowed: 'retails 29 08 2026' matches 'retails'.
+
+    `allow_suffix` widens that to any trailing words, for the files this app
+    writes with a branch name appended - Physical_Audit_Sheet_YAVATMAL.xlsx.
+    It is granted per spec rather than globally, because the strictness is
+    what stops AD_Lost_Enquiry.xlsx being scored as the enquiry book.
     """
     if stem == target:
         return 0
     if stem.startswith(target + " "):
-        # Accept only if the remainder looks like a date or version suffix,
-        # not another word that makes it a different report.
         suffix = stem[len(target):].strip()
+        # A date or version suffix is always fine.
         if re.fullmatch(r"[\d\s\-_./]+|v\d+|final|latest", suffix):
             return 1
+        # A branch or code suffix, only where the spec expects one.
+        if allow_suffix:
+            return 2
     return None
 
 
@@ -145,7 +155,8 @@ def _resolve(input_dir: Path) -> tuple[dict[str, tuple[Path, str]], list[str]]:
             if p in claimed:
                 continue
             # Try every accepted name for this slot; best (lowest) rank wins.
-            ranks = [r for r in (_matches(stems[p], t) for t in spec.targets)
+            ranks = [r for r in (_matches(stems[p], t, spec.allow_suffix)
+                                 for t in spec.targets)
                      if r is not None]
             if ranks:
                 candidates.append((min(ranks), len(p.stem), p))
@@ -216,7 +227,7 @@ def load_all(input_dir: str | Path, cfg: Config) -> AuditData:
             continue
         path, sheet = bound[spec.ref]
         df = pd.read_excel(path, sheet_name=sheet, header=0)
-        df = _normalise(df, spec.ref)
+        df = _normalise(df, spec.ref, cfg.raw.get("booking_stages_counted"))
         data.datasets[spec.ref] = Dataset(
             ref=spec.ref, label=spec.label, filename=path.name, sheet=sheet, df=df
         )
@@ -226,7 +237,8 @@ def load_all(input_dir: str | Path, cfg: Config) -> AuditData:
     return data
 
 
-def _normalise(df: pd.DataFrame, ref: str) -> pd.DataFrame:
+def _normalise(df: pd.DataFrame, ref: str,
+               booking_stages: list[str] | None = None) -> pd.DataFrame:
     """Add derived columns the metrics layer relies on."""
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -258,6 +270,15 @@ def _normalise(df: pd.DataFrame, ref: str) -> pd.DataFrame:
 
     elif ref == "F4":  # Booking
         df["_created_dt"] = parse_dt(col(df, "Created Date"))
+        # A booking counts when its stage says so. Which stages count is a
+        # business decision, not a technical one, so it lives in norms.yaml
+        # under booking_stages_counted. The default is "Booked" alone.
+        st = col(df, "Booking Stage")
+        if st is not None:
+            wanted = {str(v).strip().upper() for v in (booking_stages or ["Booked"])}
+            df["_booked"] = st.astype(str).str.strip().str.upper().isin(wanted)
+        else:
+            df["_booked"] = True
 
     elif ref == "F5":  # Test drive
         df["_created_dt"] = parse_dt(col(df, "TD Created Date"))
@@ -288,7 +309,8 @@ def filter_branches(data: AuditData, branches: list[str] | None) -> AuditData:
         return data
     wanted = {str(b).strip().upper() for b in branches}
     out = AuditData(missing=list(data.missing), input_dir=data.input_dir,
-                    targets=data.targets,
+                    targets=data.targets, period=data.period,
+                    period_notes=data.period_notes,
                     # A branch audit is judged against that branch's slice of
                     # the plan, so record which one this is.
                     target_branch=(branches[0] if len(branches) == 1
@@ -301,6 +323,44 @@ def filter_branches(data: AuditData, branches: list[str] | None) -> AuditData:
         out.datasets[ref] = Dataset(ref=ds.ref, label=ds.label, filename=ds.filename,
                                     sheet=ds.sheet, df=df)
     return out
+
+
+def filter_segment(data: AuditData, segment: str | None) -> AuditData:
+    """Restrict every extract to one vehicle segment.
+
+    Personal, BEV, Commercial and LMM are separate businesses sharing a
+    showroom, so they are audited separately. Rows whose model matches no
+    list are dropped from a segment-scoped run and reported, never defaulted
+    into a segment they might not belong to.
+    """
+    if not segment or str(segment).lower() in ("all", ""):
+        return data
+    from .segments import filter_to_segment
+
+    out = AuditData(missing=list(data.missing), input_dir=data.input_dir,
+                    targets=data.targets, period=data.period,
+                    period_notes=data.period_notes, target_branch=data.target_branch,
+                    segment=segment)
+    for ref, ds in data.datasets.items():
+        df = ds.df
+        # Complaint and survey extracts carry a Product column, not a model
+        # family; leave them whole rather than filtering on a guess.
+        if ref in ("F3", "F4", "F5", "F6"):
+            df = filter_to_segment(df, segment)
+        out.datasets[ref] = Dataset(ref=ds.ref, label=ds.label,
+                                    filename=ds.filename, sheet=ds.sheet, df=df)
+    return out
+
+
+def segments_present(data: AuditData) -> dict[str, int]:
+    """Enquiry counts per segment, for the picker and the report."""
+    from .segments import segment_series
+
+    enq = data.get("F3")
+    if enq is None:
+        return {}
+    seg = segment_series(enq)
+    return seg.value_counts().to_dict() if not seg.empty else {}
 
 
 def branches_present(data: AuditData) -> list[str]:

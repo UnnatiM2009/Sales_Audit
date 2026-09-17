@@ -24,6 +24,11 @@ class InputSpec:
     scores: str           # human-readable note on what it feeds
     signature: tuple[str, ...] = ()   # columns that must be present to accept a match
     aliases: tuple[str, ...] = ()     # other filenames that are also accepted
+    # True for files this app writes with a branch or code appended, e.g.
+    # Physical_Audit_Sheet_NAGPUR_KAMPTHEE_ROAD.xlsx. Without this the
+    # downloaded file is refused on upload, which is the worst kind of bug:
+    # the app rejecting its own output.
+    allow_suffix: bool = False
 
     @staticmethod
     def _norm(name: str) -> str:
@@ -59,25 +64,47 @@ INPUT_FILES: tuple[InputSpec, ...] = (
     InputSpec("F6", "retails.xlsx", "Retail invoice extract", True,
               "Pillars C, D, E, F, G",
               ("Invoice Number", "Invoice Status")),
+    # The DMS exports these with singular names, and "Test Dive" is how the
+    # portal spells it. Accepting both is cheaper than asking an auditor to
+    # rename a file every month, and the column signature still guards against
+    # the wrong file being bound.
     InputSpec("F7", "enquiry_concerns.xlsx", "Enquiry-stage complaints", False,
-              "Line 7.2", ("Enquiry ID", "Rating")),
+              "Line 7.2", ("Enquiry ID", "Rating"),
+              aliases=("enquiry_concern.xlsx", "enquiry concern.xlsx",
+                       "ad_enquiry.xlsx")),
     InputSpec("F8", "test_drive_concerns.xlsx", "Test-drive complaints", False,
-              "Line 7.2", ("Test Drive Name", "Rating")),
+              "Line 7.2", ("Test Drive Name", "Rating"),
+              aliases=("test_drive_concern.xlsx", "test_dive_concern.xlsx",
+                       "test_dive_concerns.xlsx", "test dive concern.xlsx",
+                       "ad_test_drive.xlsx")),
     InputSpec("F9", "new_vehicle_delivery_experience.xlsx",
               "Delivery-experience complaints", False, "Line 7.2",
               ("VDN Number", "Response")),
     InputSpec("F10", "new_vehicle_delivery_experience_30_days.xlsx",
               "30-day post-delivery feedback", False, "Line 7.2",
               ("VDN Number", "Ratings")),
+    InputSpec("F13", "ad_lost_enquiry.xlsx", "Lost-enquiry survey", False,
+              "Lines 1.5, 7.2", ("Enquiry ID", "StageName"),
+              aliases=("lost_enquiry.xlsx", "ad lost enquiry.xlsx",
+                       "lost_enquiry_survey.xlsx", "ad_lost_enquiry_concern.xlsx")),
+    InputSpec("F14", "booking_cancellation_concern.xlsx",
+              "Booking cancellation survey", False, "Lines 2.3, 7.2",
+              ("DMS Case No.", "Booking Cancellation Response"),
+              aliases=("booking_cancellation.xlsx", "booking_cancellation_concerns.xlsx",
+                       "booking cancellation concern.xlsx",
+                       "ad_booking_cancellation.xlsx")),
     InputSpec("F12", "sales_target.xlsx", "Sales target by location and manager",
               False, "Lines 1.1, 3.1, 3.5, 3.6",
               ("location", "manager", "enq", "test_drive", "booking", "retail"),
               aliases=("sales_target_-_clean.xlsx", "sales target.xlsx",
-                       "sales_targets.xlsx", "target.xlsx")),
+                       "sales_target_clean.xlsx", "sales targets.xlsx",
+                       "sales_targets.xlsx", "target.xlsx"),
+              allow_suffix=True),
     InputSpec("F11", "physical_audit_sheet.xlsx", "Physical Audit Sheet (completed)",
               False, "Pillar J", (),
               aliases=("physical_audit.xlsx", "physical_check_sheet.xlsx",
-                       "physical audit sheet.xlsx")),
+                       "physical audit sheet.xlsx"),
+              allow_suffix=True),
 )
 
 # Files the audit needs but which usually are not in the DMS export. Named

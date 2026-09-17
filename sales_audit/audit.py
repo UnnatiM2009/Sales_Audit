@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import exceptions as exc
+from . import period as period_mod
 from . import targets as targets_mod
 from . import history, metrics, physical
 from .config import Config
@@ -20,7 +21,18 @@ log = logging.getLogger(__name__)
 
 def run_audit(data: AuditData, cfg: Config,
               physical_path: Path | None = None,
-              branch_scope: str | None = None) -> tuple[AuditResult, pd.DataFrame]:
+              branch_scope: str | None = None,
+              audit_period: str | None = None) -> tuple[AuditResult, pd.DataFrame]:
+    # An audit is run in one month and examines the one before it. Resolving
+    # that first, and clipping every extract to it, means the rest of the
+    # audit works on a whole completed month - no part-month arithmetic, and
+    # a stray back-dated invoice cannot stretch the period.
+    if data.period is None:
+        data.period = period_mod.parse_period(
+            audit_period if audit_period is not None
+            else cfg.raw.get("audit_period"))
+        data.period_notes = period_mod.clip_to_period(data, data.period)
+
     # The sales target file, if supplied, drives lines 1.1, 3.1, 3.5 and 3.6.
     # Read once here rather than in each builder.
     if data.targets is None and data.get("F12") is not None:
@@ -28,10 +40,30 @@ def run_audit(data: AuditData, cfg: Config,
         try:
             data.targets = targets_mod.load_targets(
                 (data.input_dir or Path(".")) / ds.filename, cfg)
+            if data.period is not None:
+                data.targets.period_key = data.period.key
+                if not any(m.startswith(data.period.key)
+                           for m in data.targets.months if m):
+                    log.warning("The sales target file has no rows for %s "
+                                "(it covers %s) — targets are taken from the "
+                                "whole file instead", data.period.label,
+                                ", ".join(sorted(data.targets.months)) or "no month")
+                    data.targets.period_key = None
         except Exception as e:  # a malformed plan must not stop the audit
             log.warning("Sales target file could not be read (%s)", e)
     if branch_scope and not data.target_branch:
         data.target_branch = branch_scope
+
+    # A model no list claims is a gap in the lists. Saying so is the point:
+    # filing it under a default segment would corrupt the split.
+    if data.segment:
+        from .segments import unclassified
+        stray = unclassified(data.get("F3"))
+        if stray:
+            log.warning("Models in no segment list (excluded from a %s audit): %s",
+                        data.segment,
+                        ", ".join(f"{k} ({v})" for k, v in
+                                  sorted(stray.items(), key=lambda kv: -kv[1])[:8]))
 
     pillars: list[Pillar] = [b(data, cfg) for b in metrics.BUILDERS]
 

@@ -75,6 +75,10 @@ class TargetBook:
         col = {v: k for k, v in STAGES.items()}[stage]
         out = 0.0
         for r in self.rows:
+            # When the plan is month-stamped and an audit month is set, only
+            # that month's rows count.
+            if self.period_key and r.month and not r.month.startswith(self.period_key):
+                continue
             # A plan location with no DMS branch contributes no actuals, so
             # counting its target would make the network look short against a
             # number nothing could ever have been recorded towards. These are
@@ -88,10 +92,21 @@ class TargetBook:
             out += getattr(r, col) or 0.0
         return round(out, 2)
 
+    # Set by the audit to the month being examined, so a plan covering
+    # several months contributes only the relevant one.
+    period_key: str | None = None
+
+    def _months_counted(self) -> int:
+        if self.period_key:
+            hit = [m for m in self.months if m.startswith(self.period_key)]
+            if hit:
+                return len(hit)
+        return max(len(self.months), 1)
+
     def monthly(self, branch: str | None = None,
                 manager: str | None = None) -> dict[str, float]:
-        """All four stage targets at once, per month of plan."""
-        n = max(len(self.months), 1)
+        """All four stage targets for the audit month."""
+        n = self._months_counted()
         return {stage: round(self.total(stage, branch, manager) / n, 2)
                 for stage in STAGES.values()}
 

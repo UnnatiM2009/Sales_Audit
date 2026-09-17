@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -10,7 +11,8 @@ from pathlib import Path
 from . import history
 from .audit import run_audit
 from .config import Config
-from .loaders import branches_present, filter_branches, load_all
+from .loaders import (branches_present, filter_branches, filter_segment,
+                      load_all, segments_present)
 from . import physical
 from .physical import write_template
 from .report_docx import write_report
@@ -59,6 +61,17 @@ examples:
                         "overwrite each other")
     p.add_argument("--history", action="store_true",
                    help="print the trend of previous runs and exit")
+    p.add_argument("--month", default=None, metavar="YYYY-MM",
+                   help="the month to audit. Defaults to the last completed "
+                        "month, so an audit run in September examines August.")
+    p.add_argument("--segment", default=None, metavar="NAME",
+                   help="audit one vehicle segment only: Personal, BEV, "
+                        "Commercial or LMM")
+    p.add_argument("--list-segments", action="store_true",
+                   help="print the segments found in the extracts and exit")
+    p.add_argument("--no-mobile", action="store_true",
+                   help="ignore audits captured on a phone; score pillar J only "
+                        "from a sheet in the input folder")
     p.add_argument("--no-history", action="store_true",
                    help="do not record this run in history.json")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
@@ -120,6 +133,19 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s", e)
         return 2
 
+    if args.list_segments:
+        from .segments import unclassified
+        found = segments_present(data)
+        log.info("Enquiries by segment:")
+        for k, v in sorted(found.items(), key=lambda kv: -kv[1]):
+            log.info("  %-12s %5d", k, v)
+        stray = unclassified(data.get("F3"))
+        if stray:
+            log.warning("In no segment list:")
+            for k, v in sorted(stray.items(), key=lambda kv: -kv[1]):
+                log.warning("  %-24s %4d", k, v)
+        return 0
+
     if args.list_branches:
         found = branches_present(data)
         log.info("Branches found in the extracts (%d):", len(found))
@@ -132,7 +158,38 @@ def main(argv: list[str] | None = None) -> int:
                      else _find_sheet(Path(args.input)))
     physical_arg = physical_path if physical_path.exists() else None
 
+    # No sheet in the input folder? Fall back to whatever was captured on a
+    # phone. The walk has already been done; asking the auditor to export it
+    # and copy the file across is a step that earns nothing.
+    if physical_arg is None and not args.no_mobile:
+        store_dir = Path(os.environ.get("AUDIT_PHYSICAL_DIR",
+                                        out_dir / "physical"))
+        try:
+            from . import mobile_store
+            if store_dir.is_dir() and mobile_store.has_any(store_dir):
+                built = out_dir / "Physical_Audit_Sheet_from_phone.xlsx"
+                used = mobile_store.build_sheet(
+                    store_dir, built, cfg.branches,
+                    only=args.branch[0] if args.branch else None)
+                if used:
+                    physical_arg = built
+                    log.info("Physical audit taken from the phone captures: %s",
+                             ", ".join(sorted(used)))
+        except Exception as e:  # never let this stop the audit
+            log.warning("Phone captures could not be read (%s)", e)
+
     scoped = filter_branches(data, args.branch) if args.branch else data
+    if args.segment:
+        seg = next((s for s in ("Personal", "BEV", "Commercial", "LMM")
+                    if s.lower() == args.segment.strip().lower()), None)
+        if seg is None:
+            log.error("Unknown segment '%s'. Use Personal, BEV, Commercial or LMM.",
+                      args.segment)
+            return 2
+        scoped = filter_segment(scoped, seg)
+        if scoped.get("F3") is None or scoped.get("F3").empty:
+            log.error("No %s records in these extracts.", seg)
+            return 2
     if args.branch:
         found = branches_present(data)
         unknown = [b for b in args.branch if b not in found]
@@ -143,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     # A single-branch run scores that branch's showroom, not the network's.
     single = args.branch[0] if args.branch and len(args.branch) == 1 else None
-    result, detail = run_audit(scoped, cfg, physical_arg, branch_scope=single)
+    result, detail = run_audit(scoped, cfg, physical_arg, branch_scope=single,
+                               audit_period=args.month)
 
     # Daily runs would overwrite each other; --archive keeps them side by side.
     report_dir = out_dir
@@ -153,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
         report_dir.mkdir(parents=True, exist_ok=True)
 
     suffix = ""
+    if args.segment:
+        suffix += "_" + _slug(args.segment)
     if args.branch:
         suffix = "_" + "_".join(_slug(b) for b in args.branch)
         report_dir = report_dir / _slug(args.branch[0]) if len(args.branch) == 1 else report_dir
@@ -169,7 +229,8 @@ def main(argv: list[str] | None = None) -> int:
         for b in branches_present(data):
             bdata = filter_branches(data, [b])
             try:
-                bres, bdet = run_audit(bdata, cfg, physical_arg, branch_scope=b)
+                bres, bdet = run_audit(bdata, cfg, physical_arg, branch_scope=b,
+                                       audit_period=args.month)
             except Exception as e:  # a thin branch should not stop the batch
                 log.warning("  %-24s skipped (%s)", b, e)
                 continue
@@ -197,7 +258,13 @@ def main(argv: list[str] | None = None) -> int:
     arrow = ""
     if delta is not None:
         arrow = f"   {'+' if delta > 0 else ''}{delta:.1f} vs previous run"
-    log.info("Period              : %s (%s day(s))", result.context.get("period", "—"),
+    if args.segment:
+        log.info("Segment             : %s", args.segment)
+    per = getattr(scoped, "period", None)
+    if per is not None:
+        log.info("Audit month         : %s   (audited on %s)", per.label,
+                 datetime.now().strftime("%d-%b-%Y"))
+    log.info("Data covers         : %s (%s day(s))", result.context.get("period", "—"),
              result.context.get("days_covered") or "?")
     log.info("Sales Process Index : %.1f%%  (%s)%s", result.index or 0, band["band"], arrow)
     log.info("Scored              : %.1f of %g weightage points",
@@ -212,8 +279,9 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Biggest fall        : %s %+.1f pts", worst[0], worst[1])
         if best[1] > 0:
             log.info("Biggest gain        : %s %+.1f pts", best[0], best[1])
-    if not physical_path.exists():
-        log.warning("Physical Audit Sheet not supplied — pillar J unscored.")
+    if physical_arg is None:
+        log.warning("Physical Audit Sheet not supplied and no phone captures "
+                    "found — pillar J unscored.")
         log.warning("  Generate a blank one:  python run_audit.py --make-sheet")
         log.warning("  Then save it as 'Physical_Audit_Sheet.xlsx' in: %s",
                     Path(args.input).resolve())
